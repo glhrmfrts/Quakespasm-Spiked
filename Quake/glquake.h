@@ -274,6 +274,105 @@ extern	qboolean	gl_texture_NPOT;
 typedef void (APIENTRYP QS_PFNGLCOMPRESSEDTEXIMAGE2DPROC) (GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLint border, GLsizei imageSize, const GLvoid *data);
 extern QS_PFNGLCOMPRESSEDTEXIMAGE2DPROC GL_CompressedTexImage2D;
 
+
+// gnemeth -- vertex array object
+typedef void (APIENTRYP STQ_PFNGLGENVERTEXARRAYSPROC) (GLuint num, GLuint* ids);
+extern STQ_PFNGLGENVERTEXARRAYSPROC GL_GenVertexArraysFunc;
+
+typedef void (APIENTRYP STQ_PFNGLDELETEVERTEXARRAYSPROC) (GLuint num, GLuint* ids);
+extern STQ_PFNGLDELETEVERTEXARRAYSPROC GL_DeleteVertexArraysFunc;
+
+typedef void (APIENTRYP STQ_PFNGLBINDVERTEXARRAYPROC) (GLuint id);
+extern STQ_PFNGLBINDVERTEXARRAYPROC GL_BindVertexArrayFunc;
+
+// gnemeth -- framebuffer api
+
+typedef void (APIENTRYP STQ_PFNGLGENFRAMEBUFFERSPROC) (GLuint num, GLuint* ids);
+extern STQ_PFNGLGENFRAMEBUFFERSPROC GL_GenFramebuffersFunc;
+
+typedef void (APIENTRYP STQ_PFNGLBINDFRAMEBUFFERPROC) (GLenum target, GLuint id);
+extern STQ_PFNGLBINDFRAMEBUFFERPROC GL_BindFramebufferFunc;
+
+typedef GLenum (APIENTRYP STQ_PFNGLCHECKFRAMEBUFFERSTATUSPROC) (GLenum target);
+extern STQ_PFNGLCHECKFRAMEBUFFERSTATUSPROC GL_CheckFramebufferStatusFunc;
+
+typedef void (APIENTRYP STQ_PFNGLFRAMEBUFFERTEXTUREPROC) (GLenum target, GLenum attachment, GLuint tex_id, GLint level);
+extern STQ_PFNGLFRAMEBUFFERTEXTUREPROC GL_FramebufferTextureFunc;
+
+typedef void (APIENTRYP STQ_PFNGLUNIFORMMATRIX4FVPROC) (GLuint loc, GLuint count, GLboolean row_major, const GLfloat* data);
+extern STQ_PFNGLUNIFORMMATRIX4FVPROC GL_UniformMatrix4fvFunc;
+
+// gnemeth -- geometry and vertex attributes
+
+typedef enum gl_vertex_attribute_type {
+	gl_vertex_attribute_type_none,
+	gl_vertex_attribute_type_position,
+	gl_vertex_attribute_type_texcoord,
+	gl_vertex_attribute_type_normal,
+	gl_vertex_attribute_type_color,
+	gl_vertex_attribute_type_customfloat,
+	gl_vertex_attribute_type_customfloat2,
+	gl_vertex_attribute_type_customfloat3,
+	gl_vertex_attribute_type_customfloat4,
+} gl_vertex_attribute_type_t;
+
+typedef struct gl_vertex_attribute_s {
+	gl_vertex_attribute_type_t type;
+    unsigned int location;
+    unsigned int size;
+    GLenum data_type;
+    unsigned int stride;
+	unsigned int offset;
+} gl_vertex_attribute_t;
+
+typedef enum gl_geometry_type {
+	gl_geometry_type_static,
+	gl_geometry_type_dynamic,
+	gl_geometry_type_stream,
+} gl_geometry_type_t;
+
+typedef struct gl_geometry_s {
+	gl_geometry_type_t type;
+	gl_vertex_attribute_t attributes[16];
+	unsigned int num_attributes;
+	unsigned int vertex_data_size;
+	unsigned int index_data_size;
+	float* vertex_data;
+	unsigned int* index_data;
+    unsigned int vertex_array_id;
+    unsigned int vertex_buffer_id;
+    unsigned int index_buffer_id;
+	unsigned int vertex_size;
+} gl_geometry_t;
+
+// Receives sentinel-terminated (gl_vertex_attribute_type_none) attribute list.
+qboolean GL_CreateGeometry(gl_geometry_t* g, gl_geometry_type_t type, const gl_vertex_attribute_t attrs[]);
+
+void GL_DestroyGeometry(gl_geometry_t* g);
+
+qboolean GL_AllocateQuads(gl_geometry_t* g, size_t num_quads);
+
+qboolean GL_SendGeometry(gl_geometry_t* g);
+
+gl_vertex_attribute_t GL_CreatePositionVertexAttribute();
+
+gl_vertex_attribute_t GL_CreateTexCoordVertexAttribute();
+
+gl_vertex_attribute_t GL_CreateNormalVertexAttribute();
+
+// gnemeth -- Higher-level shader
+
+typedef struct gl_shader_s {
+	unsigned int program_id;
+	unsigned int vertex_shader;
+	unsigned int fragment_shader;
+	unsigned int geometry_shader;
+} gl_shader_t;
+
+qboolean GL_CreateShaderFromVF(gl_shader_t* sh, const char* vert_source, const char* frag_source);
+
+void GL_DestroyShader(gl_shader_t* sh);
+
 //johnfitz -- polygon offset
 #define OFFSET_BMODEL 1
 #define OFFSET_NONE 0

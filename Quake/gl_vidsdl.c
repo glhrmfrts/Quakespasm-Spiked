@@ -149,6 +149,17 @@ QS_PFNGLUNIFORM4FVPROC GL_Uniform4fvFunc = NULL; //spike (for iqms)
 
 QS_PFNGLCOMPRESSEDTEXIMAGE2DPROC GL_CompressedTexImage2D = NULL;	//spike
 
+STQ_PFNGLGENVERTEXARRAYSPROC GL_GenVertexArraysFunc = NULL; // gnemeth
+STQ_PFNGLDELETEVERTEXARRAYSPROC GL_DeleteVertexArraysFunc = NULL; // gnemeth
+STQ_PFNGLBINDVERTEXARRAYPROC GL_BindVertexArrayFunc = NULL; // gnemeth
+
+STQ_PFNGLGENFRAMEBUFFERSPROC GL_GenFramebuffersFunc = NULL; // gnemeth
+STQ_PFNGLBINDFRAMEBUFFERPROC GL_BindFramebufferFunc = NULL; // gnemeth
+STQ_PFNGLFRAMEBUFFERTEXTUREPROC GL_FramebufferTextureFunc = NULL; // gnemeth
+STQ_PFNGLCHECKFRAMEBUFFERSTATUSPROC GL_CheckFramebufferStatusFunc = NULL; // gnemeth
+
+STQ_PFNGLUNIFORMMATRIX4FVPROC GL_UniformMatrix4fvFunc = NULL; // gnemeth
+
 //====================================
 
 //johnfitz -- new cvars
@@ -1259,6 +1270,43 @@ static void GL_CheckExtensions (void)
 	else
 	{
 		Con_Warning ("GLSL alias model rendering not available, using Fitz renderer\n");
+	}
+
+	if (gl_version_major >= 3)
+	{
+		//
+		// gnemeth - Check vertex array support
+		//
+		GL_GenVertexArraysFunc = (STQ_PFNGLGENVERTEXARRAYSPROC) SDL_GL_GetProcAddress("glGenVertexArrays");
+		GL_DeleteVertexArraysFunc = (STQ_PFNGLDELETEVERTEXARRAYSPROC) SDL_GL_GetProcAddress("glDeleteVertexArrays");
+		GL_BindVertexArrayFunc = (STQ_PFNGLBINDVERTEXARRAYPROC) SDL_GL_GetProcAddress("glBindVertexArray");
+		if (GL_GenVertexArraysFunc && GL_DeleteVertexArraysFunc && GL_BindVertexArrayFunc)
+		{
+			Con_Printf ("FOUND: ARB_vertex_array_object\n");
+		}
+
+		//
+		// gnemeth - Check framebuffer support
+		//
+		GL_GenFramebuffersFunc = (STQ_PFNGLGENFRAMEBUFFERSPROC) SDL_GL_GetProcAddress("glGenFramebuffers");
+		GL_BindFramebufferFunc = (STQ_PFNGLBINDFRAMEBUFFERPROC) SDL_GL_GetProcAddress("glBindFramebuffer");
+		GL_CheckFramebufferStatusFunc = (STQ_PFNGLCHECKFRAMEBUFFERSTATUSPROC) SDL_GL_GetProcAddress("glCheckFramebufferStatus");
+		GL_FramebufferTextureFunc = (STQ_PFNGLFRAMEBUFFERTEXTUREPROC) SDL_GL_GetProcAddress("glFramebufferTexture");
+		if (GL_GenFramebuffersFunc && GL_BindFramebufferFunc && GL_CheckFramebufferStatusFunc && GL_FramebufferTextureFunc)
+		{
+			Con_Printf ("FOUND: EXT_framebuffer_object\n");
+		}
+		else {
+			Sys_Error ("StrawberryQuake requires OpenGL framebuffers\n");
+			exit (EXIT_FAILURE);
+		}
+
+		GL_UniformMatrix4fvFunc = (STQ_PFNGLUNIFORMMATRIX4FVPROC) SDL_GL_GetProcAddress("glUniformMatrix4fv");
+	}
+	else
+	{
+		Sys_Error ("StrawberryQuake requires at least OpenGL 3.0");
+		exit (EXIT_FAILURE);
 	}
 }
 

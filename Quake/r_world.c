@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // r_world.c: world model rendering
 
 #include "quakedef.h"
+#include "r_shadow_glsl.h"
 
 extern cvar_t gl_fullbrights, r_drawflat, gl_overbright, r_oldskyleaf, r_showtris; //johnfitz
 
@@ -85,6 +86,45 @@ qboolean R_BackFaceCull (msurface_t *surf)
 		return true;
 
 	return false;
+}
+
+void R_MarkSurfacesForSunShadowMap ()
+{
+	mleaf_t		*leaf;
+	msurface_t	*surf, **mark;
+	int			i, j;
+	byte		*vis;
+
+	vis = Mod_NoVisPVS (cl.worldmodel);
+
+	// set all chains to null
+	for (i=0 ; i<cl.worldmodel->numtextures ; i++)
+		if (cl.worldmodel->textures[i])
+			cl.worldmodel->textures[i]->texturechains[chain_world] = NULL;
+
+	r_visframecount++;
+
+	// iterate through leaves, marking surfaces
+	leaf = &cl.worldmodel->leafs[1];
+	for (i=0 ; i<cl.worldmodel->numleafs ; i++, leaf++)
+	{
+		if (vis[i>>3] & (1<<(i&7)))
+		{
+			for (j=0, mark = leaf->firstmarksurface; j<leaf->nummarksurfaces; j++, mark++)
+			{
+				surf = *mark;
+				if (surf->visframe != r_visframecount)
+				{
+					surf->visframe = r_visframecount;
+					R_ChainSurface(surf, chain_world);
+				}
+			}
+
+			// add static models
+			if (leaf->efrags)
+				R_StoreEfrags (&leaf->efrags);
+		}
+	}
 }
 
 /*
@@ -351,7 +391,7 @@ static unsigned int num_vbo_indices;
 R_ClearBatch
 ================
 */
-static void R_ClearBatch ()
+void R_ClearBatch ()
 {
 	num_vbo_indices = 0;
 }
@@ -363,7 +403,7 @@ R_FlushBatch
 Draw the current batch if non-empty and clears it, ready for more R_BatchSurface calls.
 ================
 */
-static void R_FlushBatch ()
+void R_FlushBatch ()
 {
 	if (num_vbo_indices > 0)
 	{
@@ -380,7 +420,7 @@ Add the surface to the current batch, or just draw it immediately if we're not
 using VBOs.
 ================
 */
-static void R_BatchSurface (msurface_t *s)
+void R_BatchSurface (msurface_t *s)
 {
 	int num_surf_indices;
 
@@ -872,11 +912,17 @@ static GLuint r_world_program;
 // uniforms used in frag shader
 static GLuint texLoc;
 static GLuint LMTexLoc;
+static GLuint shadowTexLoc;
 static GLuint fullbrightTexLoc;
 static GLuint useFullbrightTexLoc;
 static GLuint useOverbrightLoc;
 static GLuint useAlphaTestLoc;
+static GLuint useShadowLoc;
 static GLuint alphaLoc;
+static GLuint shadowMatrixLoc;
+static GLuint modelMatrixLoc;
+static GLuint sunBrightenLoc;
+static GLuint sunDarkenLoc;
 
 #define vertAttrIndex 0
 #define texCoordsAttrIndex 1
@@ -901,15 +947,23 @@ void GLWorld_CreateShaders (void)
 	//    `gl_ModelViewProjectionMatrix * vec4(Vert, 1.0);`. Work around with
 	//    making Vert a vec4. (https://sourceforge.net/p/quakespasm/bugs/39/)
 	const GLchar *vertSource = \
-		"#version 110\n"
+		"#version 120\n"
 		"\n"
 		"attribute vec4 Vert;\n"
 		"attribute vec2 TexCoords;\n"
 		"attribute vec2 LMCoords;\n"
 		"\n"
+
+		SHADOW_VERT_UNIFORMS_GLSL
+
+		"uniform mat4 ModelMatrix;\n"
+
 		"varying float FogFragCoord;\n"
 		"varying vec2 tc_tex;\n"
 		"varying vec2 tc_lm;\n"
+
+		SHADOW_VARYING_GLSL
+
 		"\n"
 		"void main()\n"
 		"{\n"
@@ -917,10 +971,14 @@ void GLWorld_CreateShaders (void)
 		"	tc_lm = LMCoords;\n"
 		"	gl_Position = gl_ModelViewProjectionMatrix * Vert;\n"
 		"	FogFragCoord = gl_Position.w;\n"
+		"   vec4 modelVert = ModelMatrix * Vert;\n"
+		
+		SHADOW_GET_COORD_GLSL("modelVert")
+
 		"}\n";
 	
 	const GLchar *fragSource = \
-		"#version 110\n"
+		"#version 120\n"
 		"\n"
 		"uniform sampler2D Tex;\n"
 		"uniform sampler2D LMTex;\n"
@@ -929,10 +987,16 @@ void GLWorld_CreateShaders (void)
 		"uniform bool UseOverbright;\n"
 		"uniform bool UseAlphaTest;\n"
 		"uniform float Alpha;\n"
+
+		SHADOW_FRAG_UNIFORMS_GLSL
+
 		"\n"
 		"varying float FogFragCoord;\n"
 		"varying vec2 tc_tex;\n"
 		"varying vec2 tc_lm;\n"
+
+		SHADOW_VARYING_GLSL
+
 		"\n"
 		"void main()\n"
 		"{\n"
@@ -945,17 +1009,30 @@ void GLWorld_CreateShaders (void)
 		"	if (UseFullbrightTex)\n"
 		"		result += texture2D(FullbrightTex, tc_tex.xy);\n"
 		"	result = clamp(result, 0.0, 1.0);\n"
+		"\n"
+
+		SHADOW_SAMPLE_GLSL
+
+		"\n"
 		"	float fog = exp(-gl_Fog.density * gl_Fog.density * FogFragCoord * FogFragCoord);\n"
 		"	fog = clamp(fog, 0.0, 1.0);\n"
 		"	result = mix(gl_Fog.color, result, fog);\n"
 		"	result.a = Alpha;\n" // FIXME: This will make almost transparent things cut holes though heavy fog
+		"\n"
 		"	gl_FragColor = result;\n"
 		"}\n";
-
+	
 	if (!gl_glsl_alias_able)
 		return;
 
-	r_world_program = GL_CreateProgram (vertSource, fragSource, sizeof(bindings)/sizeof(bindings[0]), bindings);
+	gl_shader_t sh = { 0 };
+	GL_CreateShaderFromVF(&sh, vertSource, fragSource);
+	r_world_program = sh.program_id;
+
+	int numbindings = sizeof(bindings)/sizeof(bindings[0]);
+	for (int i = 0; i < numbindings; i++) {
+		GL_BindAttribLocationFunc (r_world_program, bindings[i].attrib, bindings[i].name);
+	}
 	
 	if (r_world_program != 0)
 	{
@@ -967,12 +1044,21 @@ void GLWorld_CreateShaders (void)
 		useOverbrightLoc = GL_GetUniformLocation (&r_world_program, "UseOverbright");
 		useAlphaTestLoc = GL_GetUniformLocation (&r_world_program, "UseAlphaTest");
 		alphaLoc = GL_GetUniformLocation (&r_world_program, "Alpha");
+		useShadowLoc = GL_GetUniformLocation (&r_world_program, "UseShadow");
+		shadowTexLoc = GL_GetUniformLocation (&r_world_program, "ShadowTex");
+		shadowMatrixLoc = GL_GetUniformLocation (&r_world_program, "ShadowMatrix");
+		modelMatrixLoc = GL_GetUniformLocation (&r_world_program, "ModelMatrix");
+		sunBrightenLoc = GL_GetUniformLocation (&r_world_program, "SunBrighten");
+		sunDarkenLoc = GL_GetUniformLocation (&r_world_program, "SunDarken");
 	}
 
 	GLWater_CreateShaders();
 }
 
 extern GLuint gl_bmodel_vbo;
+
+extern cvar_t r_shadow_sunbrighten;
+extern cvar_t r_shadow_sundarken;
 
 /*
 ================
@@ -991,7 +1077,7 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 	int		lastlightmap;
 	gltexture_t	*fullbright = NULL;
 	float		entalpha;
-
+	
 	entalpha = (ent != NULL) ? ENTALPHA_DECODE(ent->alpha) : 1.0f;
 
 // enable blending / disable depth writes
@@ -1000,9 +1086,9 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 		glDepthMask (GL_FALSE);
 		glEnable (GL_BLEND);
 	}
-
+	
 	GL_UseProgramFunc (r_world_program);
-
+	
 // Bind the buffers
 	GL_BindBuffer (GL_ARRAY_BUFFER, gl_bmodel_vbo);
 	GL_BindBuffer (GL_ELEMENT_ARRAY_BUFFER, 0); // indices come from client memory!
@@ -1010,11 +1096,11 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 	GL_EnableVertexAttribArrayFunc (vertAttrIndex);
 	GL_EnableVertexAttribArrayFunc (texCoordsAttrIndex);
 	GL_EnableVertexAttribArrayFunc (LMCoordsAttrIndex);
-
+	
 	GL_VertexAttribPointerFunc (vertAttrIndex,      3, GL_FLOAT, GL_FALSE, VERTEXSIZE * sizeof(float), ((float *)0));
 	GL_VertexAttribPointerFunc (texCoordsAttrIndex, 2, GL_FLOAT, GL_FALSE, VERTEXSIZE * sizeof(float), ((float *)0) + 3);
 	GL_VertexAttribPointerFunc (LMCoordsAttrIndex,  2, GL_FLOAT, GL_FALSE, VERTEXSIZE * sizeof(float), ((float *)0) + 5);
-
+	
 // set uniforms
 	GL_Uniform1iFunc (texLoc, 0);
 	GL_Uniform1iFunc (LMTexLoc, 1);
@@ -1023,12 +1109,40 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 	GL_Uniform1iFunc (useOverbrightLoc, (int)gl_overbright.value);
 	GL_Uniform1iFunc (useAlphaTestLoc, 0);
 	GL_Uniform1fFunc (alphaLoc, entalpha);
+	GL_Uniform1fFunc (sunBrightenLoc, r_shadow_sunbrighten.value);
+	GL_Uniform1fFunc (sunDarkenLoc, r_shadow_sundarken.value);
 
+// gnemeth - get the shadow data
+	if (r_shadow_sun.value) {
+		GLuint shadow_texture;
+		mat4_t shadow_matrix;
+		R_Shadow_GetDepthTextureAndMatrix (&shadow_texture, shadow_matrix);
+
+		mat4_t model_matrix;
+		if (ent) {
+			Matrix4_InitTranslationAndRotation (ent->origin, ent->angles, model_matrix);
+		}
+		else {
+			Matrix4_InitIdentity (model_matrix);
+		}
+
+		GL_Uniform1iFunc (useShadowLoc, 1);
+		GL_Uniform1iFunc (shadowTexLoc, 3);
+		GL_UniformMatrix4fvFunc (shadowMatrixLoc, 1, false, shadow_matrix);
+		GL_UniformMatrix4fvFunc (modelMatrixLoc, 1, false, model_matrix);
+
+		GL_SelectTexture (GL_TEXTURE3);
+		glBindTexture (GL_TEXTURE_2D, shadow_texture);
+	}
+	else {
+		GL_Uniform1iFunc (useShadowLoc, 0);
+	}
+	
 	for (i=0 ; i<model->numtextures ; i++)
 	{
 		t = model->textures[i];
 
-		if (!t || !t->texturechains[chain] || t->texturechains[chain]->flags & (SURF_DRAWTURB | SURF_DRAWTILED | SURF_NOTEXTURE))
+		if (!t || !t->texturechains[chain] || t->texturechains[chain]->flags & (SURF_DRAWTILED | SURF_NOTEXTURE))
 			continue;
 
 	// Enable/disable TMU 2 (fullbrights)
@@ -1050,23 +1164,23 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 		{
 			if (!bound) //only bind once we are sure we need this texture
 			{
-				GL_SelectTexture (GL_TEXTURE0);
-				GL_Bind ((R_TextureAnimation(t, ent != NULL ? ent->frame : 0))->gltexture);
-					
+				GL_SelectTexture(GL_TEXTURE0);
+				GL_Bind((R_TextureAnimation(t, ent != NULL ? ent->frame : 0))->gltexture);
+
 				if (t->texturechains[chain]->flags & SURF_DRAWFENCE)
-					GL_Uniform1iFunc (useAlphaTestLoc, 1); // Flip alpha test back on
-										
+					GL_Uniform1iFunc(useAlphaTestLoc, 1); // Flip alpha test back on
+
 				bound = true;
 				lastlightmap = s->lightmaptexturenum;
 			}
-				
-			if (s->lightmaptexturenum != lastlightmap)
-				R_FlushBatch ();
 
-			GL_SelectTexture (GL_TEXTURE1);
-			GL_Bind (lightmaps[s->lightmaptexturenum].texture);
+			if (s->lightmaptexturenum != lastlightmap)
+				R_FlushBatch();
+
+			GL_SelectTexture(GL_TEXTURE1);
+			GL_Bind(lightmaps[s->lightmaptexturenum].texture);
 			lastlightmap = s->lightmaptexturenum;
-			R_BatchSurface (s);
+			R_BatchSurface(s);
 
 			rs_brushpasses++;
 		}
@@ -1076,15 +1190,15 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 		if (bound && t->texturechains[chain]->flags & SURF_DRAWFENCE)
 			GL_Uniform1iFunc (useAlphaTestLoc, 0); // Flip alpha test back off
 	}
-
+	
 	// clean up
 	GL_DisableVertexAttribArrayFunc (vertAttrIndex);
 	GL_DisableVertexAttribArrayFunc (texCoordsAttrIndex);
 	GL_DisableVertexAttribArrayFunc (LMCoordsAttrIndex);
-
+	
 	GL_UseProgramFunc (0);
 	GL_SelectTexture (GL_TEXTURE0);
-
+	
 	if (entalpha < 1)
 	{
 		glDepthMask (GL_TRUE);

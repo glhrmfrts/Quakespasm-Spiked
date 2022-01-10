@@ -871,3 +871,116 @@ void Matrix4_ProjectionMatrix(float fovx, float fovy, float neard, float fard, q
 	out[11] = -1;
 	out[15] = 0;
 }
+
+
+void Matrix4_InitIdentity (mat4_t out)
+{
+	memset (out, 0, sizeof(mat4_t));
+	out[0] = 1;
+	out[5] = 1;
+	out[10] = 1;
+	out[15] = 1;
+}
+
+void Matrix4_InitRotation (float degrees, const vec3_t axis, mat4_t out)
+{
+	const float radians = degrees * M_PI / 180.0f;
+	const float s = sinf (radians);
+	const float c = cosf (radians);
+
+	const float x = axis[0];
+	const float y = axis[1];
+	const float z = axis[2];
+
+	mat4_t rot = {
+	   x*x*(1.0f-c)+c,   x*y*(1.0f-c)-z*s, x*z*(1.0f-c)+y*s, 0.0f,
+       y*x*(1.0f-c)+z*s, y*y*(1.0f-c)+c,   y*z*(1.0f-c)-x*s, 0.0f,
+       z*x*(1.0f-c)-y*s, z*y*(1.0f-c)+x*s, z*z*(1.0f-c)+c,   0.0f,
+       0.0f,             0.0f,             0.0f,             1.0f
+	};
+
+	memcpy (out, rot, sizeof(mat4_t));
+}
+
+void Matrix4_InitTranslationAndRotation (const vec3_t org, const vec3_t angles, mat4_t out)
+{
+	memset (out, 0, sizeof(mat4_t));
+
+	out[0] = 1;
+	out[5] = 1;
+	out[10] = 1;
+	out[12] = org[0];
+	out[13] = org[1];
+	out[14] = org[2];
+	out[15] = 1;
+
+	//glRotatef (angles[1],  0, 0, 1);
+	//glRotatef (-angles[0],  0, 1, 0);
+	//glRotatef (angles[2],  1, 0, 0);
+
+	Matrix4_Rotate (out, -angles[1], vec3_z, out);
+	// Matrix4_Rotate (out, -angles[0], ROTATE_Y, out);
+	// Matrix4_Rotate (out, angles[2], ROTATE_X, out);
+}
+
+void Matrix4_InitScale (const vec3_t scale, mat4_t out)
+{
+	memset (out, 0, sizeof(mat4_t));
+
+	out[0] = scale[0];
+	out[5] = scale[1];
+	out[10] = scale[2];
+	out[15] = 1;
+}
+
+void Matrix4_Translate (const mat4_t in, const vec3_t org, mat4_t out)
+{
+	mat4_t min, temp;
+	memcpy (min, in, sizeof(mat4_t));
+	Matrix4_InitTranslationAndRotation (org, (const vec3_t){0, 0, 0}, temp);
+	Matrix4_Multiply (min, temp, out);
+}
+
+void Matrix4_Scale (const mat4_t in, const vec3_t scale, mat4_t out)
+{
+	mat4_t min, temp;
+	memcpy (min, in, sizeof(mat4_t));
+	Matrix4_InitScale (scale, temp);
+	Matrix4_Multiply (min, temp, out);
+}
+
+void Matrix4_Rotate (const mat4_t in, float degrees, const vec3_t axis, mat4_t out)
+{
+	mat4_t min, temp;
+	memcpy (min, in, sizeof(mat4_t));
+	Matrix4_InitRotation (degrees, axis, temp);
+	Matrix4_Multiply (min, temp, out);
+}
+
+// set the OpenGL orthographic projection matrix
+void Matrix4_Ortho(
+    const float b, const float t, const float l, const float r, 
+    const float n, const float f, 
+    mat4_t M) 
+{ 
+    // set OpenGL perspective projection matrix
+    M[0] = 2 / (r - l); 
+    M[1] = 0; 
+    M[2] = 0; 
+    M[3] = 0; 
+ 
+    M[4+0] = 0; 
+    M[4+1] = 2 / (t - b); 
+    M[4+2] = 0; 
+    M[4+3] = 0; 
+ 
+    M[8+0] = 0; 
+    M[8+1] = 0; 
+    M[8+2] = -2 / (f - n); 
+    M[8+3] = 0; 
+ 
+    M[12+0] = -(r + l) / (r - l); 
+    M[12+1] = -(t + b) / (t - b); 
+    M[12+2] = -(f + n) / (f - n); 
+    M[12+3] = 1; 
+}

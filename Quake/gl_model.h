@@ -414,6 +414,24 @@ typedef struct
 	bonepose_t inverse;
 } boneinfo_t;
 
+//johnfitz -- struct for passing lerp information to drawing functions
+typedef struct {
+	short pose1;
+	short pose2;
+	float blend;
+	vec3_t origin;
+	vec3_t angles;
+	bonepose_t *bonestate;
+} lerpdata_t;
+//johnfitz
+
+enum
+{
+	ALIAS_GLSL_BASIC,
+	ALIAS_GLSL_SKELETAL,
+	ALIAS_GLSL_MODES
+};
+
 #define	VANILLA_MAXALIASVERTS	1024
 #define	MAXALIASVERTS	65536 // spike -- was 2000 //johnfitz -- was 1024
 #define	MAXALIASFRAMES	1024  //spike -- was 256

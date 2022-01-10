@@ -100,6 +100,21 @@ qboolean Matrix4_Invert(const mat4_t m, mat4_t out);
 void Matrix4_ViewMatrix(const vec3_t viewangles, const vec3_t vieworg, mat4_t out);
 void Matrix4_ProjectionMatrix(float fovx, float fovy, float neard, float fard, qboolean d3d, float xskew, float yskew, mat4_t out);
 
+// Axis of rotation
+static const vec3_t vec3_x = { 1.0f, 0.0f, 0.0f };
+static const vec3_t vec3_y = { 0.0f, 1.0f, 0.0f };
+static const vec3_t vec3_z = { 0.0f, 0.0f, 1.0f };
+
+void Matrix4_InitIdentity(mat4_t out);
+void Matrix4_InitRotation(float degrees, const vec3_t axis, mat4_t out);
+void Matrix4_InitScale(const vec3_t scale, mat4_t out);
+void Matrix4_InitTranslationAndRotation(const vec3_t org, const vec3_t angles, mat4_t out);
+void Matrix4_Translate(const mat4_t in, const vec3_t org, mat4_t out);
+void Matrix4_Scale(const mat4_t in, const vec3_t scale, mat4_t out);
+void Matrix4_Rotate(const mat4_t in, float degrees, const vec3_t axis, mat4_t out);
+
+void Matrix4_Ortho(const float b, const float t, const float l, const float r, const float n, const float f, mat4_t M);
+
 void FloorDivMod (double numer, double denom, int *quotient,
 		int *rem);
 fixed16_t Invert24To16(fixed16_t val);

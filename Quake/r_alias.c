@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 //r_alias.c -- alias model rendering
 
 #include "quakedef.h"
+#include "r_shadow_glsl.h"
 
 extern cvar_t r_drawflat, gl_overbright_models, gl_fullbrights, r_lerpmodels, r_lerpmove; //johnfitz
 extern cvar_t scr_fov, cl_gun_fovscale;
@@ -57,23 +58,7 @@ qboolean	overbright; //johnfitz
 
 qboolean shading = true; //johnfitz -- if false, disable vertex shading for various reasons (fullbright, r_lightmap, showtris, etc)
 
-//johnfitz -- struct for passing lerp information to drawing functions
-typedef struct {
-	short pose1;
-	short pose2;
-	float blend;
-	vec3_t origin;
-	vec3_t angles;
-	bonepose_t *bonestate;
-} lerpdata_t;
-//johnfitz
 
-enum
-{
-	ALIAS_GLSL_BASIC,
-	ALIAS_GLSL_SKELETAL,
-	ALIAS_GLSL_MODES
-};
 typedef struct
 {
 	int maxbones;
@@ -92,6 +77,11 @@ typedef struct
 	GLuint useFullbrightTexLoc;
 	GLuint useOverbrightLoc;
 	GLuint useAlphaTestLoc;
+
+	GLuint useShadowLoc;
+	GLuint shadowTexLoc;
+	GLuint shadowMatrixLoc;
+	GLuint modelMatrixLoc;
 } aliasglsl_t;
 static aliasglsl_t r_alias_glsl[ALIAS_GLSL_MODES];
 
@@ -193,9 +183,17 @@ void GLAlias_CreateShaders (void)
 		"attribute vec4 Pose2Vert;\n"
 		"attribute vec3 Pose2Normal;\n"
 		"#endif\n"
+
+		SHADOW_VERT_UNIFORMS_GLSL
+
+		"uniform mat4 ModelMatrix;\n"
+
 		"\n"
 		"varying float FogFragCoord;\n"
 		"\n"
+
+		SHADOW_VARYING_GLSL
+
 		"float r_avertexnormal_dot(vec3 vertexnormal) // from MH \n"
 		"{\n"
 		"        float dot = dot(vertexnormal, ShadeVector);\n"
@@ -224,7 +222,7 @@ void GLAlias_CreateShaders (void)
 		"	wmat[2] += BoneTable[2+3*int(BoneIndex.w)] * BoneWeight.w;"
 		"	wmat[3] = vec4(0.0,0.0,0.0,1.0);\n"
 		"	vec4 lerpedVert = (vec4(Pose1Vert.xyz, 1.0) * wmat);\n"
-		"	float dot1 = r_avertexnormal_dot(normalize((vec4(Pose1Normal.xyz, 0.0) * wmat).xyz));\n"
+		"	float dot1 = r_avertexnormal_dot((vec4(Pose1Vert.xyz, 0.0) * wmat).xyz);\n"
 		"#else\n"
 		"	vec4 lerpedVert = mix(vec4(Pose1Vert.xyz, 1.0), vec4(Pose2Vert.xyz, 1.0), Blend);\n"
 		"	float dot1 = mix(r_avertexnormal_dot(Pose1Normal), r_avertexnormal_dot(Pose2Normal), Blend);\n"
@@ -235,16 +233,26 @@ void GLAlias_CreateShaders (void)
 		"#ifdef SKELETAL\n"
 		"	gl_FrontColor *= VertColours;\n"	//this is basically only useful for vertex alphas.
 		"#endif\n"
+
+		"	vec4 modelVert = ModelMatrix * lerpedVert;\n"
+
+		SHADOW_GET_COORD_GLSL("modelVert")
+
 		"}\n";
 
 	const GLchar *fragSource = \
-		"#version 110\n"
+		"#version 120\n"
 		"\n"
 		"uniform sampler2D Tex;\n"
 		"uniform sampler2D FullbrightTex;\n"
 		"uniform bool UseFullbrightTex;\n"
 		"uniform bool UseOverbright;\n"
 		"uniform bool UseAlphaTest;\n"
+		
+		SHADOW_FRAG_UNIFORMS_GLSL
+
+		SHADOW_VARYING_GLSL
+
 		"\n"
 		"varying float FogFragCoord;\n"
 		"\n"
@@ -259,6 +267,9 @@ void GLAlias_CreateShaders (void)
 		"	if (UseFullbrightTex)\n"
 		"		result += texture2D(FullbrightTex, gl_TexCoord[0].xy);\n"
 		"	result = clamp(result, 0.0, 1.0);\n"
+
+		SHADOW_SAMPLE_GLSL
+
 		"	float fog = exp(-gl_Fog.density * gl_Fog.density * FogFragCoord * FogFragCoord);\n"
 		"	fog = clamp(fog, 0.0, 1.0) * gl_Fog.color.a;\n"
 		"	result.rgb = mix(gl_Fog.color.rgb, result.rgb, fog);\n"
@@ -307,6 +318,10 @@ void GLAlias_CreateShaders (void)
 			glsl->useFullbrightTexLoc = GL_GetUniformLocation (&glsl->program, "UseFullbrightTex");
 			glsl->useOverbrightLoc = GL_GetUniformLocation (&glsl->program, "UseOverbright");
 			glsl->useAlphaTestLoc = GL_GetUniformLocation (&glsl->program, "UseAlphaTest");
+			glsl->useShadowLoc = GL_GetUniformLocation (&glsl->program, "UseShadow");
+			glsl->shadowTexLoc = GL_GetUniformLocation (&glsl->program, "ShadowTex");
+			glsl->shadowMatrixLoc = GL_GetUniformLocation (&glsl->program, "ShadowMatrix");
+			glsl->modelMatrixLoc = GL_GetUniformLocation (&glsl->program, "ModelMatrix");
 		}
 	}
 }
@@ -407,6 +422,29 @@ void GL_DrawAliasFrame_GLSL (aliasglsl_t *glsl, aliashdr_t *paliashdr, lerpdata_
 	GL_Uniform1fFunc (glsl->useOverbrightLoc, overbright ? 1 : 0);
 	GL_Uniform1iFunc (glsl->useAlphaTestLoc, (currententity->model->flags & MF_HOLEY) ? 1 : 0);
 
+// gnemeth - get the shadow data
+	if (r_shadow_sun.value) {
+		GLuint shadow_texture;
+		mat4_t shadow_matrix;
+		R_Shadow_GetDepthTextureAndMatrix (&shadow_texture, shadow_matrix);
+
+		mat4_t model_matrix;
+		Matrix4_InitTranslationAndRotation (lerpdata.origin, lerpdata.angles, model_matrix);
+		Matrix4_Translate (model_matrix, paliashdr->scale_origin, model_matrix);
+		Matrix4_Scale (model_matrix, paliashdr->scale, model_matrix);
+
+		GL_Uniform1iFunc (glsl->useShadowLoc, 1);
+		GL_Uniform1iFunc (glsl->shadowTexLoc, 3);
+		GL_UniformMatrix4fvFunc (glsl->shadowMatrixLoc, 1, false, shadow_matrix);
+		GL_UniformMatrix4fvFunc (glsl->modelMatrixLoc, 1, false, model_matrix);
+
+		GL_SelectTexture (GL_TEXTURE3);
+		glBindTexture (GL_TEXTURE_2D, shadow_texture);
+	}
+	else {
+		GL_Uniform1iFunc (glsl->useShadowLoc, 0);
+	}
+	
 // set textures
 	GL_SelectTexture (GL_TEXTURE0);
 	GL_Bind (tx);

@@ -620,7 +620,11 @@ void R_SetupView (void)
 	if (r_refdef.drawworld)
 	{
 		currententity = &r_worldentity;
-		R_MarkSurfaces (); //johnfitz -- create texture chains from PVS
+		// gnemeth - If we're doing sun shadows, don't bother culling any surfaces
+		// because we'll mess with the PVS later anyway
+		if (!r_shadow_sun.value) {
+			R_MarkSurfaces(); //johnfitz -- create texture chains from PVS
+		}
 		currententity = NULL;
 	}
 
@@ -956,6 +960,8 @@ void R_DrawShadows (void)
 	}
 }
 
+extern cvar_t r_shadow_sundebug;
+
 /*
 ================
 R_RenderScene
@@ -969,6 +975,9 @@ void R_RenderScene (void)
 	Fog_EnableGFog (); //johnfitz
 
 	Sky_DrawSky (); //johnfitz
+
+	R_Shadow_RenderShadowMap ();
+	if (r_shadow_sundebug.value) { return; }
 
 	R_DrawWorld ();
 	currententity = NULL;

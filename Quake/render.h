@@ -193,5 +193,56 @@ void D_DeleteSurfaceCache (void);
 void D_InitCaches (void *buffer, int size);
 void R_SetVrect (vrect_t *pvrect, vrect_t *pvrectin, int lineadj);
 
+
+
+//
+// surface batching
+//
+/*
+================
+R_ClearBatch
+================
+*/
+void R_ClearBatch ();
+
+/*
+================
+R_FlushBatch
+
+Draw the current batch if non-empty and clears it, ready for more R_BatchSurface calls.
+================
+*/
+void R_FlushBatch ();
+
+struct msurface_s;
+
+/*
+================
+R_BatchSurface
+
+Add the surface to the current batch, or just draw it immediately if we're not
+using VBOs.
+================
+*/
+void R_BatchSurface (struct msurface_s *s);
+
+
+//
+// shadow mapping
+//
+
+extern cvar_t r_shadow_sun;
+
+void R_Shadow_Init ();
+
+void R_Shadow_SetupSun (vec3_t angles);
+
+void R_Shadow_RenderShadowMap ();
+
+void R_Shadow_GetDepthTextureAndMatrix (GLuint* out_texture, mat4_t out_matrix);
+
+
+void R_MarkSurfacesForSunShadowMap ();
+
 #endif	/* _QUAKE_RENDER_H */
 
