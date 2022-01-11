@@ -984,3 +984,35 @@ void Matrix4_Ortho(
     M[12+2] = -(f + n) / (f - n); 
     M[12+3] = 1; 
 }
+
+void Matrix4_LookAt(const vec3_t eye, const vec3_t center, const vec3_t up, mat4_t out)
+{
+	vec3_t f, s, u;
+	VectorSubtract (center, eye, f);
+	VectorNormalize (f);
+	
+	CrossProduct (f, up, s);
+	VectorNormalize (s);
+
+	CrossProduct (s, f, u);
+
+	out[0] = s[0];
+	out[1] = s[1];
+	out[2] = s[2];
+	out[3] = 0.0f;
+
+	out[4+0] = u[0];
+	out[4+1] = u[1];
+	out[4+2] = u[2];
+	out[4+3] = 0.0f;
+
+	out[8+0] = -f[0];
+	out[8+1] = -f[1];
+	out[8+2] = -f[2];
+	out[8+3] = 0.0f;
+
+	out[12+0] = -DotProduct(s, eye);
+	out[12+1] = -DotProduct(u, eye);
+	out[12+2] = DotProduct(f, eye);
+	out[12+3] = 1.0f;
+}

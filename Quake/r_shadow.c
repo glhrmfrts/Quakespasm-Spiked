@@ -99,11 +99,11 @@ static void R_Shadow_SetPos_f()
 
 void R_Shadow_Init ()
 {
-    Cvar_RegisterVariable (&r_shadow_sun);
-    Cvar_RegisterVariable (&r_shadow_sundebug);
+	Cvar_RegisterVariable (&r_shadow_sun);
+	Cvar_RegisterVariable (&r_shadow_sundebug);
 	Cvar_RegisterVariable (&r_shadow_sunbrighten);
 	Cvar_RegisterVariable (&r_shadow_sundarken);
-    Cmd_AddCommand ("r_shadow_sunangle", R_Shadow_SetAngle_f);
+	Cmd_AddCommand ("r_shadow_sunangle", R_Shadow_SetAngle_f);
 	Cmd_AddCommand ("r_shadow_sunpos", R_Shadow_SetPos_f);
 }
 
@@ -249,7 +249,7 @@ void R_Shadow_SetupSun (vec3_t angle)
     // so here we need to convert from one to the other.
     //
     state.sun_glangle[0] = -angle[1];
-    state.sun_glangle[1] = angle[0];
+    state.sun_glangle[1] = -angle[0];
     state.sun_glangle[2] = angle[2];
 
     vec3_t pos = {0,0,0};
@@ -266,26 +266,92 @@ void R_Shadow_SetupSun (vec3_t angle)
 		debug_override_sun_pos = false;
 	}
 	else {
-		pos[0] = mins[0];
-		pos[1] = maxs[1];
-		pos[2] = maxs[2];
+		//pos[0] = mins[0];
+		//pos[1] = maxs[1];
+		//pos[2] = maxs[2];
 	}
 	VectorCopy (pos, current_sun_pos);
 
-    //VectorAdd(pos, cl.worldmodel->mins, pos);
-    //VectorAdd(pos, cl.worldmodel->maxs, pos);
-    //VectorScale(pos, 0.5f, pos);
+	vec4_t world_corners[8] = {
+		{ mins[0], mins[1], mins[2], 1.0f },
+		{ maxs[0], mins[1], mins[2], 1.0f },
+		{ maxs[0], maxs[1], mins[2], 1.0f },
+		{ mins[0], maxs[1], mins[2], 1.0f },
+
+		{ mins[0], mins[1], maxs[2], 1.0f },
+		{ maxs[0], mins[1], maxs[2], 1.0f },
+		{ maxs[0], maxs[1], maxs[2], 1.0f },
+		{ mins[0], maxs[1], maxs[2], 1.0f },
+	};
+
+	vec3_t fwd, right, up;
+	AngleVectors (state.sun_glangle, fwd, right, up);
+
+	Con_Printf ("fwd: (%f, %f, %f)\n", fwd[0], fwd[1], fwd[2]);
+
+	vec3_t view_angle = { -state.sun_glangle[0], -state.sun_glangle[1], state.sun_glangle[2] };
+	mat4_t view_matrix;
+	// Matrix4_LookAt(pos, fwd, vec3_z, view_matrix);
+	Matrix4_ViewMatrix (view_angle, pos, view_matrix);
+
+	vec4_t view_world_corners[8];
+	for (int i = 0; i < countof(world_corners); i++) {
+		Matrix4_Transform4 (view_matrix, world_corners[i], view_world_corners[i]);
+	}
+
+	vec4_t view_mins;
+	vec4_t view_maxs;
+	Matrix4_Transform4 (view_matrix, (const vec4_t){mins[0], mins[1], mins[2], 1.0f}, view_mins);
+	Matrix4_Transform4 (view_matrix, (const vec4_t){maxs[0], maxs[1], maxs[2], 1.0f}, view_maxs);
+
+	Con_Printf("mins.x: %f, maxs.x: %f\n", mins[0], maxs[0]);
+	Con_Printf("mins.y: %f, maxs.y: %f\n", mins[1], maxs[1]);
+	Con_Printf("mins.z: %f, maxs.z: %f\n", mins[2], maxs[2]);
+	// Con_Printf("view_mins.z: %f, view_maxs.z: %f\n", view_mins[2], view_maxs[2]);
+
+	vec3_t proj_mins = {FLT_MAX, FLT_MAX, FLT_MAX};
+	vec3_t proj_maxs = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
+	for (int i = 0; i < countof(view_world_corners); i++) {
+		for (int ax = 0; ax < 3; ax++) {
+			if (view_world_corners[i][ax] < proj_mins[ax]) {
+				proj_mins[ax] = view_world_corners[i][ax];
+			}
+			if (view_world_corners[i][ax] > proj_maxs[ax]) {
+				proj_maxs[ax] = view_world_corners[i][ax];
+			}
+		}
+	}
+
+	Con_Printf ("proj_mins.x: %f, proj_maxs.x: %f\n", proj_mins[0], proj_maxs[0]);
+	Con_Printf ("proj_mins.y: %f, proj_maxs.y: %f\n", proj_mins[1], proj_maxs[1]);
+	Con_Printf ("proj_mins.z: %f, proj_maxs.z: %f\n", proj_mins[2], proj_maxs[2]);
+
+	const float depth = (proj_mins[2] + proj_maxs[2]) * 0.5f;
 
     mat4_t proj_matrix;
-    float scale = 0.5f;
-    Matrix4_Ortho (0.0f,worldsize[1], 0.0f,worldsize[0], 0.0f,worldsize[2], proj_matrix);
+    const float scale = 1.0f;
+    Matrix4_Ortho (
+		// bottom, top
+		proj_mins[1]*scale,proj_maxs[1]*scale,
+		//-4096.0f,4096.0f,
+
+		// left, right
+		proj_mins[0]*scale,proj_maxs[0]*scale,
+		//-4096.0f, 4096.0f,
+
+		// near,far
+		proj_mins[2]*scale,proj_maxs[2]*scale,
+
+		proj_matrix
+	);
 
     // Matrix4_ProjectionMatrix(r_fovx, r_fovy, 0.1f, 16384, false, 0, 0, proj_matrix);
 
-    mat4_t view_matrix;
-    Matrix4_ViewMatrix (state.sun_glangle, pos, view_matrix);
+	mat4_t render_view_matrix;
+	// Matrix4_LookAt(pos, fwd, vec3_z, render_view_matrix);
+	Matrix4_ViewMatrix (state.sun_glangle, pos, render_view_matrix);
 
-    Matrix4_Multiply (proj_matrix, view_matrix, state.shadow_pv_matrix);
+    Matrix4_Multiply (proj_matrix, render_view_matrix, state.shadow_pv_matrix);
 }
 
 //
