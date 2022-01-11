@@ -82,6 +82,8 @@ typedef struct
 	GLuint shadowTexLoc;
 	GLuint shadowMatrixLoc;
 	GLuint modelMatrixLoc;
+	GLuint sunBrightenLoc;
+	GLuint sunDarkenLoc;
 } aliasglsl_t;
 static aliasglsl_t r_alias_glsl[ALIAS_GLSL_MODES];
 
@@ -322,6 +324,8 @@ void GLAlias_CreateShaders (void)
 			glsl->shadowTexLoc = GL_GetUniformLocation (&glsl->program, "ShadowTex");
 			glsl->shadowMatrixLoc = GL_GetUniformLocation (&glsl->program, "ShadowMatrix");
 			glsl->modelMatrixLoc = GL_GetUniformLocation (&glsl->program, "ModelMatrix");
+			glsl->sunBrightenLoc = GL_GetUniformLocation (&glsl->program, "SunBrighten");
+			glsl->sunDarkenLoc = GL_GetUniformLocation (&glsl->program, "SunDarken");
 		}
 	}
 }
@@ -435,6 +439,8 @@ void GL_DrawAliasFrame_GLSL (aliasglsl_t *glsl, aliashdr_t *paliashdr, lerpdata_
 
 		GL_Uniform1iFunc (glsl->useShadowLoc, 1);
 		GL_Uniform1iFunc (glsl->shadowTexLoc, 3);
+		GL_Uniform1fFunc (glsl->sunBrightenLoc, r_shadow_sunbrighten.value);
+		GL_Uniform1fFunc (glsl->sunDarkenLoc, r_shadow_sundarken.value);
 		GL_UniformMatrix4fvFunc (glsl->shadowMatrixLoc, 1, false, shadow_matrix);
 		GL_UniformMatrix4fvFunc (glsl->modelMatrixLoc, 1, false, model_matrix);
 

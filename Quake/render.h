@@ -232,6 +232,8 @@ void R_BatchSurface (struct msurface_s *s);
 //
 
 extern cvar_t r_shadow_sun;
+extern cvar_t r_shadow_sunbrighten;
+extern cvar_t r_shadow_sundarken;
 
 void R_Shadow_Init ();
 

@@ -1,13 +1,20 @@
 //
 // This file contains the implementation for shadow mapping of a single directional light (the sun)
+// and point lights.
+//
+// TODO:
+// 		- Sample Shadow Map in water
+//		- Correctly render fence textures in shadow map
+//		- Implement Point lights shadows
+//		- Better sampling technique
 //
 
 #include "quakedef.h"
 #include "glquake.h"
 
 enum {
-    SHADOW_WIDTH = 1024*4,
-    SHADOW_HEIGHT = 1024*4,
+	SHADOW_WIDTH = 1024*4,
+	SHADOW_HEIGHT = 1024*4,
 };
 
 cvar_t r_shadow_sun = {"r_shadow_sun", "1", CVAR_ARCHIVE, 1.0f};
@@ -80,23 +87,6 @@ static void R_Shadow_SetAngle_f ()
     R_Shadow_SetupSun ((const vec3_t){ yaw, pitch, roll });
 }
 
-static void R_Shadow_SetPos_f()
-{
-	if (Cmd_Argc() < 4) {
-        Con_Printf ("Current sun shadow pos: %5.1f %5.1f %5.1f\n", current_sun_pos[0], current_sun_pos[1], current_sun_pos[2]);
-        Con_Printf ("Usage: r_shadow_sunangle <yaw> <pitch> <roll>\n");
-        return;
-    }
-
-    debug_sun_pos[0] = Q_atof (Cmd_Argv(1));
-    debug_sun_pos[1] = Q_atof (Cmd_Argv(2));
-    debug_sun_pos[2] = Q_atof (Cmd_Argv(3));
-
-	debug_override_sun_pos = true;
-
-    R_Shadow_SetupSun ((const vec3_t){ state.sun_glangle[1], -state.sun_glangle[0], state.sun_glangle[2] });
-}
-
 void R_Shadow_Init ()
 {
 	Cvar_RegisterVariable (&r_shadow_sun);
@@ -104,7 +94,6 @@ void R_Shadow_Init ()
 	Cvar_RegisterVariable (&r_shadow_sunbrighten);
 	Cvar_RegisterVariable (&r_shadow_sundarken);
 	Cmd_AddCommand ("r_shadow_sunangle", R_Shadow_SetAngle_f);
-	Cmd_AddCommand ("r_shadow_sunpos", R_Shadow_SetPos_f);
 }
 
 static void R_Shadow_CreateBrushShaders ()
@@ -172,7 +161,7 @@ static void R_Shadow_CreateAliasShaders ()
 			GL_BindAttribLocationFunc(glsl->shader.program_id, bindings[i].attrib, bindings[i].name);
 		}
 #else
-		glsl->shader.program_id = GL_CreateProgram(processedVertSource, shadow_alias_fragment_shader, sizeof(bindings) / sizeof(bindings[0]), bindings);
+		glsl->shader.program_id = GL_CreateProgram (processedVertSource, shadow_alias_fragment_shader, sizeof(bindings) / sizeof(bindings[0]), bindings);
 #endif 
 
 		if (glsl->shader.program_id != 0)
@@ -190,11 +179,10 @@ static void R_Shadow_CreateAliasShaders ()
 			}
 
 			glsl->texLoc = GL_GetUniformLocation (&glsl->shader.program_id, "Tex");
-            glsl->alphaLoc = GL_GetUniformLocation (&glsl->shader.program_id, "Alpha");
-            glsl->debugLoc = GL_GetUniformLocation (&glsl->shader.program_id, "Debug");
+			glsl->alphaLoc = GL_GetUniformLocation (&glsl->shader.program_id, "Alpha");
+			glsl->debugLoc = GL_GetUniformLocation (&glsl->shader.program_id, "Debug");
 			glsl->shadowMatrixLoc = GL_GetUniformLocation (&glsl->shader.program_id, "ShadowMatrix");
 			glsl->modelMatrixLoc = GL_GetUniformLocation (&glsl->shader.program_id, "ModelMatrix");
-
             num_shadow_alias_glsl++;
 		}
 	}
@@ -274,36 +262,36 @@ static void R_Shadow_GetWorldProjectionBounds(const vec3_t mins, const vec3_t ma
 
 void R_Shadow_SetupSun (vec3_t angle)
 {
-    if (!r_shadow_sun.value) { return; }
+	if (!r_shadow_sun.value) { return; }
 
-    if (!shadow_brush_glsl.shader.program_id) {
-        R_Shadow_CreateBrushShaders ();
-    }
-    if (num_shadow_alias_glsl < ALIAS_GLSL_MODES) {
-        R_Shadow_CreateAliasShaders ();
-    }
-    if (!state.shadow_depth_tex) {
-        R_Shadow_CreateFramebuffer ();
-    }
+	if (!shadow_brush_glsl.shader.program_id) {
+		R_Shadow_CreateBrushShaders ();
+	}
+	if (num_shadow_alias_glsl < ALIAS_GLSL_MODES) {
+		R_Shadow_CreateAliasShaders ();
+	}
+	if (!state.shadow_depth_tex) {
+		R_Shadow_CreateFramebuffer ();
+	}
 
-    //
-    // We accept angles in the form of (Yaw Pitch Roll) to maintain consistency
-    // with other mapping options, but Quake internally accepts (Pitch Yaw Roll)
-    // so here we need to convert from one to the other.
-    //
-    state.sun_glangle[0] = -angle[1];
-    state.sun_glangle[1] = angle[0];
-    state.sun_glangle[2] = angle[2];
+	//
+	// We accept angles in the form of (Yaw Pitch Roll) to maintain consistency
+	// with other mapping options, but Quake internally accepts (Pitch Yaw Roll)
+	// so here we need to convert from one to the other.
+	//
+	state.sun_glangle[0] = -angle[1];
+	state.sun_glangle[1] = angle[0];
+	state.sun_glangle[2] = angle[2];
 
-    vec3_t pos = {0,0,0};
-    vec3_t mins;
-    vec3_t maxs;
-    vec3_t worldsize;
+	vec3_t pos = {0,0,0};
+	vec3_t mins;
+	vec3_t maxs;
+	vec3_t worldsize;
 	vec3_t halfsize;
 
-    VectorCopy (cl.worldmodel->mins, mins);
-    VectorCopy (cl.worldmodel->maxs, maxs);
-    VectorSubtract (maxs, mins, worldsize);
+	VectorCopy (cl.worldmodel->mins, mins);
+	VectorCopy (cl.worldmodel->maxs, maxs);
+	VectorSubtract (maxs, mins, worldsize);
 	VectorScale (worldsize, 0.5f, halfsize);
 
 	if (debug_override_sun_pos) {
@@ -346,9 +334,9 @@ void R_Shadow_SetupSun (vec3_t angle)
 
 	Con_Printf ("znear: %f, zfar: %f\n", znear, zfar);
 
-    mat4_t proj_matrix;
-    const float scale = 1.0f;
-    Matrix4_Ortho (
+	mat4_t proj_matrix;
+	const float scale = 1.0f;
+	Matrix4_Ortho (
 		// bottom, top
 		proj_mins[1]*scale,proj_maxs[1]*scale,
 		//-4096.0f,4096.0f,
@@ -363,13 +351,12 @@ void R_Shadow_SetupSun (vec3_t angle)
 		proj_matrix
 	);
 
-    // Matrix4_ProjectionMatrix(r_fovx, r_fovy, 0.1f, 16384, false, 0, 0, proj_matrix);
+	// Matrix4_ProjectionMatrix(r_fovx, r_fovy, 0.1f, 16384, false, 0, 0, proj_matrix);
 
 	mat4_t render_view_matrix;
-	// Matrix4_LookAt(pos, fwd, vec3_z, render_view_matrix);
 	Matrix4_ViewMatrix (state.sun_glangle, pos, render_view_matrix);
 
-    Matrix4_Multiply (proj_matrix, render_view_matrix, state.shadow_pv_matrix);
+	Matrix4_Multiply (proj_matrix, render_view_matrix, state.shadow_pv_matrix);
 }
 
 //
@@ -396,26 +383,26 @@ static void R_Shadow_DrawTextureChains (qmodel_t *model, entity_t *ent, texchain
 	GL_EnableVertexAttribArrayFunc (0);
 	GL_VertexAttribPointerFunc (0, 3, GL_FLOAT, GL_FALSE, VERTEXSIZE * sizeof(float), ((float *)0));
 
-    GL_EnableVertexAttribArrayFunc (1);
-    GL_VertexAttribPointerFunc (1, 2, GL_FLOAT, GL_FALSE, VERTEXSIZE * sizeof(float), ((float*)0) + 3);
+	GL_EnableVertexAttribArrayFunc (1);
+	GL_VertexAttribPointerFunc (1, 2, GL_FLOAT, GL_FALSE, VERTEXSIZE * sizeof(float), ((float*)0) + 3);
 	
 // set uniforms
 	GL_Uniform1iFunc (shadow_brush_glsl.u_Tex, 0);
-    GL_Uniform1iFunc (shadow_brush_glsl.u_UseAlphaTest, 0);
+	GL_Uniform1iFunc (shadow_brush_glsl.u_UseAlphaTest, 0);
 	GL_Uniform1fFunc (shadow_brush_glsl.u_Alpha, entalpha);
-    GL_UniformMatrix4fvFunc (shadow_brush_glsl.u_ShadowMatrix, 1, false, (const GLfloat*)state.shadow_pv_matrix);
-    GL_Uniform1iFunc (shadow_brush_glsl.u_Debug, r_shadow_sundebug.value);
+	GL_UniformMatrix4fvFunc (shadow_brush_glsl.u_ShadowMatrix, 1, false, (const GLfloat*)state.shadow_pv_matrix);
+	GL_Uniform1iFunc (shadow_brush_glsl.u_Debug, r_shadow_sundebug.value);
 
-    mat4_t model_matrix;
-    if (ent) {
-        Matrix4_InitTranslationAndRotation (ent->origin, ent->angles, model_matrix);
-    }
-    else {
-        Matrix4_InitIdentity (model_matrix);
-    }
-    GL_UniformMatrix4fvFunc (shadow_brush_glsl.u_ModelMatrix, 1, false, (const GLfloat*)model_matrix);
+	mat4_t model_matrix;
+	if (ent) {
+		Matrix4_InitTranslationAndRotation (ent->origin, ent->angles, model_matrix);
+	}
+	else {
+		Matrix4_InitIdentity (model_matrix);
+	}
+	GL_UniformMatrix4fvFunc (shadow_brush_glsl.u_ModelMatrix, 1, false, (const GLfloat*)model_matrix);
 
-    qboolean bound = false;
+	qboolean bound = false;
 	
 	for (int i=0 ; i<model->numtextures ; i++)
 	{
@@ -459,7 +446,7 @@ static void R_Shadow_DrawTextureChains (qmodel_t *model, entity_t *ent, texchain
 	GL_UseProgramFunc (0);
 	GL_SelectTexture (GL_TEXTURE0);
 
-    glEnable (GL_CULL_FACE);
+	glEnable (GL_CULL_FACE);
 }
 
 void R_Shadow_DrawBrushModel (entity_t* e)
@@ -483,8 +470,8 @@ void R_Shadow_DrawBrushModel (entity_t* e)
 	for (i=0 ; i<clmodel->nummodelsurfaces ; i++, psurf++)
 	{
 		pplane = psurf->plane;
-        R_ChainSurface (psurf, chain_model);
-        // rs_brushpolys++;
+		R_ChainSurface (psurf, chain_model);
+		// rs_brushpolys++;
 	}
 
 	R_Shadow_DrawTextureChains (clmodel, e, chain_model);
@@ -543,12 +530,12 @@ static void *GLARB_GetNormalOffset_MD3 (aliashdr_t *hdr, int pose)
 
 void R_Shadow_DrawAliasFrame (shadow_aliasglsl_t* glsl, aliashdr_t* paliashdr, lerpdata_t* lerpdata, entity_t* ent)
 {
-    float entalpha = (ent != NULL) ? ENTALPHA_DECODE(ent->alpha) : 1.0f;
+	float entalpha = (ent != NULL) ? ENTALPHA_DECODE(ent->alpha) : 1.0f;
 
-    glDisable (GL_CULL_FACE);
+	glDisable (GL_CULL_FACE);
 
-    float blend;
-    if (lerpdata->pose1 != lerpdata->pose2)
+	float blend;
+	if (lerpdata->pose1 != lerpdata->pose2)
 	{
 		blend = lerpdata->blend;
 	}
@@ -621,19 +608,19 @@ void R_Shadow_DrawAliasFrame (shadow_aliasglsl_t* glsl, aliashdr_t* paliashdr, l
 		GL_Uniform4fvFunc (glsl->bonesLoc, paliashdr->numbones*3, lerpdata->bonestate->mat);
 	GL_Uniform1iFunc (glsl->texLoc, 0);
 	GL_Uniform1fFunc (glsl->alphaLoc, entalpha);
-    GL_UniformMatrix4fvFunc (glsl->shadowMatrixLoc, 1, false, (const GLfloat*)state.shadow_pv_matrix);
-    GL_Uniform1iFunc (glsl->debugLoc, r_shadow_sundebug.value);
+	GL_UniformMatrix4fvFunc (glsl->shadowMatrixLoc, 1, false, (const GLfloat*)state.shadow_pv_matrix);
+	GL_Uniform1iFunc (glsl->debugLoc, r_shadow_sundebug.value);
 
-    mat4_t model_matrix;
-    if (ent) {
-        Matrix4_InitTranslationAndRotation (lerpdata->origin, lerpdata->angles, model_matrix);
-        Matrix4_Translate (model_matrix, paliashdr->scale_origin, model_matrix);
-        Matrix4_Scale (model_matrix, paliashdr->scale, model_matrix);
-    }
-    else {
-        Matrix4_InitIdentity (model_matrix);
-    }
-    GL_UniformMatrix4fvFunc (glsl->modelMatrixLoc, 1, false, (const GLfloat*)model_matrix);
+	mat4_t model_matrix;
+	if (ent) {
+		Matrix4_InitTranslationAndRotation (lerpdata->origin, lerpdata->angles, model_matrix);
+		Matrix4_Translate (model_matrix, paliashdr->scale_origin, model_matrix);
+		Matrix4_Scale (model_matrix, paliashdr->scale, model_matrix);
+	}
+	else {
+		Matrix4_InitIdentity (model_matrix);
+	}
+	GL_UniformMatrix4fvFunc (glsl->modelMatrixLoc, 1, false, (const GLfloat*)model_matrix);
 
 // draw
 	glDrawElements (GL_TRIANGLES, paliashdr->numindexes, GL_UNSIGNED_SHORT, ent->model->meshindexesvboptr+paliashdr->eboofs);
@@ -646,8 +633,8 @@ void R_Shadow_DrawAliasFrame (shadow_aliasglsl_t* glsl, aliashdr_t* paliashdr, l
 	GL_DisableVertexAttribArrayFunc (pose2NormalAttrIndex);
 	GL_DisableVertexAttribArrayFunc (vertColoursAttrIndex);
 
-    GL_UseProgramFunc (0);
-    GL_BindBuffer (GL_ARRAY_BUFFER, 0);
+	GL_UseProgramFunc (0);
+	GL_BindBuffer (GL_ARRAY_BUFFER, 0);
 	GL_BindBuffer (GL_ELEMENT_ARRAY_BUFFER, 0);
 }
 
@@ -661,7 +648,7 @@ void R_Shadow_DrawAliasModel (entity_t *e)
 	qboolean	alphatest = !!(e->model->flags & MF_HOLEY);
 	int surf;
 
-    if (e->eflags & EFLAGS_VIEWMODEL) { return; }
+	if (e->eflags & EFLAGS_VIEWMODEL) { return; }
 
 	//
 	// setup pose/lerp data -- do it first so we don't miss updates due to culling
@@ -738,30 +725,30 @@ void R_Shadow_DrawEntities ()
 
 void R_Shadow_RenderShadowMap ()
 {
-    if (!r_shadow_sun.value) { return; }
+	if (!r_shadow_sun.value) { return; }
 
-    r_drawingsunshadow = true;
+	r_drawingsunshadow = true;
 
 	R_MarkSurfacesForSunShadowMap ();
 
-    if (r_shadow_sundebug.value) {
-        glViewport (0, 0, 1024, 1024);
-        glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    }
-    else {
-        GL_BindFramebufferFunc (GL_FRAMEBUFFER, state.shadow_fbo);
-        glViewport (0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
-        glClear (GL_DEPTH_BUFFER_BIT);
-    }
+	if (r_shadow_sundebug.value) {
+		glViewport (0, 0, 1024, 1024);
+		glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	}
+	else {
+		GL_BindFramebufferFunc (GL_FRAMEBUFFER, state.shadow_fbo);
+		glViewport (0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
+		glClear (GL_DEPTH_BUFFER_BIT);
+	}
 
-    R_Shadow_DrawTextureChains (cl.worldmodel, NULL, chain_world);
+	R_Shadow_DrawTextureChains (cl.worldmodel, NULL, chain_world);
 
-    R_Shadow_DrawEntities ();
+	R_Shadow_DrawEntities ();
 
-    r_drawingsunshadow = false;
+	r_drawingsunshadow = false;
 
-    if (!r_shadow_sundebug.value) {
-        GL_BindFramebufferFunc (GL_FRAMEBUFFER, 0);
+	if (!r_shadow_sundebug.value) {
+		GL_BindFramebufferFunc (GL_FRAMEBUFFER, 0);
 
 		// Restore the original viewport
         
@@ -778,127 +765,127 @@ void R_Shadow_RenderShadowMap ()
 			r_refdef.vrect.height / scale);
 		//johnfitz
 
-        R_MarkSurfaces (); // Mark surfaces here because we disabled in R_SetupView
+		R_MarkSurfaces (); // Mark surfaces here because we disabled in R_SetupView
     }
 }
 
 void R_Shadow_GetDepthTextureAndMatrix (GLuint* out_texture, mat4_t out_matrix)
 {
-    *out_texture = state.shadow_depth_tex;
+	*out_texture = state.shadow_depth_tex;
 
-    mat4_t shadow_bias_matrix = {
-        0.5, 0.0, 0.0, 0.0,
-        0.0, 0.5, 0.0, 0.0,
-        0.0, 0.0, 0.5, 0.0,
-        0.5, 0.5, 0.5, 1.0
-    };
-    Matrix4_Multiply (shadow_bias_matrix, state.shadow_pv_matrix, out_matrix);
+	mat4_t shadow_bias_matrix = {
+		0.5, 0.0, 0.0, 0.0,
+		0.0, 0.5, 0.0, 0.0,
+		0.0, 0.0, 0.5, 0.0,
+		0.5, 0.5, 0.5, 1.0
+	};
+	Matrix4_Multiply (shadow_bias_matrix, state.shadow_pv_matrix, out_matrix);
 }
 
 static const GLchar *shadow_brush_vertex_shader = \
-    "#version 330 core\n"
-    "\n"
-    "layout (location=0) in vec3 Vert;\n"
-    "layout (location=1) in vec2 aTexCoord;\n"
-    "\n"
-    "uniform mat4 ShadowMatrix;\n"
-    "uniform mat4 ModelMatrix;\n"
-    "\n"
-    "\nsmooth out vec2 texCoord;\n"
-    "\n"
-    "void main()\n"
-    "{\n"
-    "	gl_Position = ShadowMatrix * ModelMatrix * vec4(Vert, 1.0);\n"
-    "   texCoord = aTexCoord;\n"
-    "}\n";
+	"#version 330 core\n"
+	"\n"
+	"layout (location=0) in vec3 Vert;\n"
+	"layout (location=1) in vec2 aTexCoord;\n"
+	"\n"
+	"uniform mat4 ShadowMatrix;\n"
+	"uniform mat4 ModelMatrix;\n"
+	"\n"
+	"\nsmooth out vec2 texCoord;\n"
+	"\n"
+	"void main()\n"
+	"{\n"
+	"	gl_Position = ShadowMatrix * ModelMatrix * vec4(Vert, 1.0);\n"
+	"   texCoord = aTexCoord;\n"
+	"}\n";
 
 static const GLchar *shadow_brush_fragment_shader = \
-    "#version 330 core\n"
-    "\n"
-    "uniform sampler2D Tex;\n"
-    "uniform int Debug;\n"
-    "\n"
-    "smooth in vec2 texCoord;\n"
-    "\n"
-    "out vec4 ccolor;\n"
-    "out float fragmentdepth;\n"
-    "\n"
-    "void main()\n"
-    "{\n"
-    "   if (Debug == 1) { ccolor = vec4(gl_FragCoord.z); }\n"
-    "   else if (Debug == 2) { ccolor = texture2D(Tex, texCoord); }\n"
-    "   else { fragmentdepth = gl_FragCoord.z; }\n"
-    "}\n";
+	"#version 330 core\n"
+	"\n"
+	"uniform sampler2D Tex;\n"
+	"uniform int Debug;\n"
+	"\n"
+	"smooth in vec2 texCoord;\n"
+	"\n"
+	"out vec4 ccolor;\n"
+	"out float fragmentdepth;\n"
+	"\n"
+	"void main()\n"
+	"{\n"
+	"   if (Debug == 1) { ccolor = vec4(gl_FragCoord.z); }\n"
+	"   else if (Debug == 2) { ccolor = texture2D(Tex, texCoord); }\n"
+	"   else { fragmentdepth = gl_FragCoord.z; }\n"
+	"}\n";
 
 
 static const GLchar *shadow_alias_vertex_shader = \
-		"#version 110\n"
-		"%s"
-		"\n"
-		"attribute vec4 Pose1Vert;\n"
-		"attribute vec4 Pose1Normal;\n"
+	"#version 110\n"
+	"%s"
+	"\n"
+	"attribute vec4 Pose1Vert;\n"
+	"attribute vec4 Pose1Normal;\n"
 
-		"#ifdef SKELETAL\n"
-		"#define BoneWeight Pose2Vert\n"
-		"#define BoneIndex Pose2Normal\n"
-		"attribute vec4 BoneWeight;\n"
-		"attribute vec4 BoneIndex;\n"
-		"attribute vec4 VertColours;\n"
-		"uniform vec4 BoneTable[MAXBONES*3];\n" //fixme: should probably try to use a UBO or SSBO.
-		"#else\n"
+	"#ifdef SKELETAL\n"
+	"#define BoneWeight Pose2Vert\n"
+	"#define BoneIndex Pose2Normal\n"
+	"attribute vec4 BoneWeight;\n"
+	"attribute vec4 BoneIndex;\n"
+	"attribute vec4 VertColours;\n"
+	"uniform vec4 BoneTable[MAXBONES*3];\n" //fixme: should probably try to use a UBO or SSBO.
+	"#else\n"
 
-		"uniform float Blend;\n"
-		"attribute vec4 Pose2Vert;\n"
-		"attribute vec4 Pose2Normal;\n"
+	"uniform float Blend;\n"
+	"attribute vec4 Pose2Vert;\n"
+	"attribute vec4 Pose2Normal;\n"
 
-		"#endif\n"
+	"#endif\n"
 
-		"attribute vec2 TexCoords; // only xy are used \n"
+	"attribute vec2 TexCoords; // only xy are used \n"
 
-        "uniform mat4 ShadowMatrix;\n"
-		"uniform mat4 ModelMatrix;\n"
+	"uniform mat4 ShadowMatrix;\n"
+	"uniform mat4 ModelMatrix;\n"
 
-		"void main()\n"
-		"{\n"
-		"	gl_TexCoord[0] = vec4(TexCoords, 0.0, 1.0);\n"
-		"#ifdef SKELETAL\n"
-		"	mat4 wmat;"
-		"	wmat[0]  = BoneTable[0+3*int(BoneIndex.x)] * BoneWeight.x;"
-		"	wmat[0] += BoneTable[0+3*int(BoneIndex.y)] * BoneWeight.y;"
-		"	wmat[0] += BoneTable[0+3*int(BoneIndex.z)] * BoneWeight.z;"
-		"	wmat[0] += BoneTable[0+3*int(BoneIndex.w)] * BoneWeight.w;"
-		"	wmat[1]  = BoneTable[1+3*int(BoneIndex.x)] * BoneWeight.x;"
-		"	wmat[1] += BoneTable[1+3*int(BoneIndex.y)] * BoneWeight.y;"
-		"	wmat[1] += BoneTable[1+3*int(BoneIndex.z)] * BoneWeight.z;"
-		"	wmat[1] += BoneTable[1+3*int(BoneIndex.w)] * BoneWeight.w;"
-		"	wmat[2]  = BoneTable[2+3*int(BoneIndex.x)] * BoneWeight.x;"
-		"	wmat[2] += BoneTable[2+3*int(BoneIndex.y)] * BoneWeight.y;"
-		"	wmat[2] += BoneTable[2+3*int(BoneIndex.z)] * BoneWeight.z;"
-		"	wmat[2] += BoneTable[2+3*int(BoneIndex.w)] * BoneWeight.w;"
-		"	wmat[3] = vec4(0.0,0.0,0.0,1.0);\n"
-		"	vec4 lerpedVert = (vec4(Pose1Vert.xyz, 1.0) * wmat);\n"
-		"#else\n"
-		"	vec4 lerpedVert = mix(vec4(Pose1Vert.xyz, 1.0), vec4(Pose2Vert.xyz, 1.0), Blend);\n"
-		"#endif\n"
-		"	gl_Position = ShadowMatrix * ModelMatrix * lerpedVert;\n"
-		"}\n";
+	"void main()\n"
+	"{\n"
+	"	gl_TexCoord[0] = vec4(TexCoords, 0.0, 1.0);\n"
+	"#ifdef SKELETAL\n"
+	"	mat4 wmat;"
+	"	wmat[0]  = BoneTable[0+3*int(BoneIndex.x)] * BoneWeight.x;"
+	"	wmat[0] += BoneTable[0+3*int(BoneIndex.y)] * BoneWeight.y;"
+	"	wmat[0] += BoneTable[0+3*int(BoneIndex.z)] * BoneWeight.z;"
+	"	wmat[0] += BoneTable[0+3*int(BoneIndex.w)] * BoneWeight.w;"
+	"	wmat[1]  = BoneTable[1+3*int(BoneIndex.x)] * BoneWeight.x;"
+	"	wmat[1] += BoneTable[1+3*int(BoneIndex.y)] * BoneWeight.y;"
+	"	wmat[1] += BoneTable[1+3*int(BoneIndex.z)] * BoneWeight.z;"
+	"	wmat[1] += BoneTable[1+3*int(BoneIndex.w)] * BoneWeight.w;"
+	"	wmat[2]  = BoneTable[2+3*int(BoneIndex.x)] * BoneWeight.x;"
+	"	wmat[2] += BoneTable[2+3*int(BoneIndex.y)] * BoneWeight.y;"
+	"	wmat[2] += BoneTable[2+3*int(BoneIndex.z)] * BoneWeight.z;"
+	"	wmat[2] += BoneTable[2+3*int(BoneIndex.w)] * BoneWeight.w;"
+	"	wmat[3] = vec4(0.0,0.0,0.0,1.0);\n"
+	"	vec4 lerpedVert = (vec4(Pose1Vert.xyz, 1.0) * wmat);\n"
+	"#else\n"
+	"	vec4 lerpedVert = mix(vec4(Pose1Vert.xyz, 1.0), vec4(Pose2Vert.xyz, 1.0), Blend);\n"
+	"#endif\n"
+	"	gl_Position = ShadowMatrix * ModelMatrix * lerpedVert;\n"
+	"}\n";
 
 static const GLchar *shadow_alias_fragment_shader = \
-    "#version 330 core\n"
-    "\n"
-    "uniform sampler2D Tex;\n"
-    "uniform int Debug;\n"
-    "uniform float Alpha;\n"
-    "\n"
-    "smooth in vec2 texCoord;\n"
-    "\n"
-    "out vec4 ccolor;\n"
-    "out float fragmentdepth;\n"
-    "\n"
-    "void main()\n"
-    "{\n"
-    "   if (Alpha < 0.1) { discard; }\n"
-    "   if (Debug == 1) { ccolor = vec4(gl_FragCoord.z); }\n"
-    "   else if (Debug == 2) { ccolor = texture2D(Tex, texCoord); }\n"
-    "   else { fragmentdepth = gl_FragCoord.z; }\n"
-    "}\n";
+	"#version 330 core\n"
+	"\n"
+	"uniform sampler2D Tex;\n"
+	"uniform int Debug;\n"
+	"uniform float Alpha;\n"
+	"\n"
+	"smooth in vec2 texCoord;\n"
+	"\n"
+	"out vec4 ccolor;\n"
+	"out float fragmentdepth;\n"
+	"\n"
+	"void main()\n"
+	"{\n"
+	"   if (Alpha < 0.1) { discard; }\n"
+	"   if (Debug == 1) { ccolor = vec4(gl_FragCoord.z); }\n"
+	"   else if (Debug == 2) { ccolor = texture2D(Tex, texCoord); }\n"
+	"   else { fragmentdepth = gl_FragCoord.z; }\n"
+	"}\n";
