@@ -80,6 +80,7 @@ typedef struct
 
 	GLuint useShadowLoc;
 	GLuint shadowTexLoc;
+	GLuint randomTexLoc;
 	GLuint shadowMatrixLoc;
 	GLuint modelMatrixLoc;
 	GLuint sunBrightenLoc;
@@ -322,6 +323,7 @@ void GLAlias_CreateShaders (void)
 			glsl->useAlphaTestLoc = GL_GetUniformLocation (&glsl->program, "UseAlphaTest");
 			glsl->useShadowLoc = GL_GetUniformLocation (&glsl->program, "UseShadow");
 			glsl->shadowTexLoc = GL_GetUniformLocation (&glsl->program, "ShadowTex");
+			glsl->randomTexLoc = GL_GetUniformLocation (&glsl->program, "RandomTex");
 			glsl->shadowMatrixLoc = GL_GetUniformLocation (&glsl->program, "ShadowMatrix");
 			glsl->modelMatrixLoc = GL_GetUniformLocation (&glsl->program, "ModelMatrix");
 			glsl->sunBrightenLoc = GL_GetUniformLocation (&glsl->program, "SunBrighten");
@@ -438,14 +440,18 @@ void GL_DrawAliasFrame_GLSL (aliasglsl_t *glsl, aliashdr_t *paliashdr, lerpdata_
 		Matrix4_Scale (model_matrix, paliashdr->scale, model_matrix);
 
 		GL_Uniform1iFunc (glsl->useShadowLoc, 1);
-		GL_Uniform1iFunc (glsl->shadowTexLoc, 3);
+		//GL_Uniform1iFunc (glsl->randomTexLoc, RANDOM_TEXTURE_UNIT);
+		GL_Uniform1iFunc (glsl->shadowTexLoc, SHADOW_MAP_TEXTURE_UNIT);
 		GL_Uniform1fFunc (glsl->sunBrightenLoc, r_shadow_sunbrighten.value);
 		GL_Uniform1fFunc (glsl->sunDarkenLoc, r_shadow_sundarken.value);
 		GL_UniformMatrix4fvFunc (glsl->shadowMatrixLoc, 1, false, shadow_matrix);
 		GL_UniformMatrix4fvFunc (glsl->modelMatrixLoc, 1, false, model_matrix);
 
-		GL_SelectTexture (GL_TEXTURE3);
+		GL_SelectTexture (SHADOW_MAP_TEXTURE_UNIT);
 		glBindTexture (GL_TEXTURE_2D, shadow_texture);
+
+		//GL_SelectTexture (RANDOM_TEXTURE_UNIT);
+		//glBindTexture (GL_TEXTURE_2D, GL_GetRandomTexture());
 	}
 	else {
 		GL_Uniform1iFunc (glsl->useShadowLoc, 0);

@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "r_shadow_glsl.h"
+#include "gl_random_texture.h"
 
 extern cvar_t gl_fullbrights, r_drawflat, gl_overbright, r_oldskyleaf, r_showtris; //johnfitz
 
@@ -834,12 +835,12 @@ void R_DrawTextureChains_Water (qmodel_t *model, entity_t *ent, texchain_t chain
 
 					if (r_shadow_sun.value) {
 						GL_Uniform1iFunc (r_water[mode].u_UseShadow, 1);
-						GL_Uniform1iFunc (r_water[mode].u_ShadowTex, 3);
+						GL_Uniform1iFunc (r_water[mode].u_ShadowTex, SHADOW_MAP_TEXTURE_UNIT);
 						GL_Uniform1fFunc (r_water[mode].u_SunBrighten, r_shadow_sunbrighten.value);
 						GL_Uniform1fFunc (r_water[mode].u_SunDarken, r_shadow_sundarken.value);
 						GL_UniformMatrix4fvFunc (r_water[mode].u_ShadowMatrix, 1, false, shadow_matrix);
 
-						GL_SelectTexture (GL_TEXTURE3);
+						GL_SelectTexture (SHADOW_MAP_TEXTURE_UNIT);
 						glBindTexture (GL_TEXTURE_2D, shadow_texture);
 					}
 					else {
@@ -965,6 +966,7 @@ static GLuint r_world_program;
 static GLuint texLoc;
 static GLuint LMTexLoc;
 static GLuint shadowTexLoc;
+static GLuint randomTexLoc;
 static GLuint fullbrightTexLoc;
 static GLuint useFullbrightTexLoc;
 static GLuint useOverbrightLoc;
@@ -1093,6 +1095,7 @@ void GLWorld_CreateShaders (void)
 		alphaLoc = GL_GetUniformLocation (&r_world_program, "Alpha");
 		useShadowLoc = GL_GetUniformLocation (&r_world_program, "UseShadow");
 		shadowTexLoc = GL_GetUniformLocation (&r_world_program, "ShadowTex");
+		randomTexLoc = GL_GetUniformLocation (&r_world_program, "RandomTex");
 		shadowMatrixLoc = GL_GetUniformLocation (&r_world_program, "ShadowMatrix");
 		modelMatrixLoc = GL_GetUniformLocation (&r_world_program, "ModelMatrix");
 		sunBrightenLoc = GL_GetUniformLocation (&r_world_program, "SunBrighten");
@@ -1172,14 +1175,18 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 		}
 
 		GL_Uniform1iFunc (useShadowLoc, 1);
-		GL_Uniform1iFunc (shadowTexLoc, 3);
+		GL_Uniform1iFunc (randomTexLoc, (RANDOM_TEXTURE_UNIT - GL_TEXTURE0));
+		GL_Uniform1iFunc (shadowTexLoc, (SHADOW_MAP_TEXTURE_UNIT - GL_TEXTURE0));
 		GL_Uniform1fFunc (sunBrightenLoc, r_shadow_sunbrighten.value);
 		GL_Uniform1fFunc (sunDarkenLoc, r_shadow_sundarken.value);
 		GL_UniformMatrix4fvFunc (shadowMatrixLoc, 1, false, shadow_matrix);
 		GL_UniformMatrix4fvFunc (modelMatrixLoc, 1, false, model_matrix);
 
-		GL_SelectTexture (GL_TEXTURE3);
+		GL_SelectTexture (SHADOW_MAP_TEXTURE_UNIT);
 		glBindTexture (GL_TEXTURE_2D, shadow_texture);
+
+		GL_SelectTexture (RANDOM_TEXTURE_UNIT);
+		glBindTexture (GL_TEXTURE_2D, GL_GetRandomTexture());
 	}
 	else {
 		GL_Uniform1iFunc (useShadowLoc, 0);

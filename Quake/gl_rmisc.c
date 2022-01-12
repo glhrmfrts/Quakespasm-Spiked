@@ -515,7 +515,7 @@ GLint GL_GetUniformLocation (GLuint *programPtr, const char *name)
 	if (location == -1)
 	{
 		Con_Warning("GL_GetUniformLocationFunc %s failed\n", name);
-		*programPtr = 0;
+		//*programPtr = 0;
 	}
 	return location;
 }

@@ -3,14 +3,16 @@
 // and point lights.
 //
 // TODO:
-// 		- X Sample Shadow Map in water
-//		- Correctly render fence textures in shadow map
+// 		- X  Sample Shadow Map in water
+//		- X? Correctly render fence textures in shadow map
+//		- XX Use Stratified Poisson Sampling
 //		- Implement Point lights shadows
-//		- Better sampling technique
+//		- Fix sampling
 //
 
 #include "quakedef.h"
 #include "glquake.h"
+#include "gl_random_texture.h"
 
 enum {
 	SHADOW_WIDTH = 1024*4,
@@ -23,22 +25,22 @@ cvar_t r_shadow_sunbrighten = {"r_shadow_sunbrighten", "0.2", CVAR_NONE, 0.2f};
 cvar_t r_shadow_sundarken = {"r_shadow_sundarken", "0.4", CVAR_NONE, 0.4f};
 
 static struct {
-    vec3_t sun_glangle;
-    gl_shader_t shadow_alias_shader;
-    mat4_t shadow_pv_matrix;
-    GLuint shadow_fbo;
-    GLuint shadow_depth_tex;
-    qboolean ok;
+	vec3_t sun_glangle;
+	gl_shader_t shadow_alias_shader;
+	mat4_t shadow_pv_matrix;
+	GLuint shadow_fbo;
+	GLuint shadow_depth_tex;
+	qboolean ok;
 } state;
 
 static struct {
-    gl_shader_t shader;
-    int u_Tex;
-    int u_UseAlphaTest;
-    int u_Alpha;
-    int u_Debug;
-    int u_ShadowMatrix;
-    int u_ModelMatrix;
+	gl_shader_t shader;
+	int u_Tex;
+	int u_UseAlphaTest;
+	int u_Alpha;
+	int u_Debug;
+	int u_ShadowMatrix;
+	int u_ModelMatrix;
 } shadow_brush_glsl;
 
 typedef struct {
@@ -52,8 +54,8 @@ typedef struct {
 
 	// uniforms used in frag shader
 	GLuint texLoc;
-    GLuint alphaLoc;
-    GLuint debugLoc;
+	GLuint alphaLoc;
+	GLuint debugLoc;
 
 	// shadow uniforms
 	GLuint shadowMatrixLoc;
@@ -74,17 +76,17 @@ static qboolean debug_override_sun_pos;
 
 static void R_Shadow_SetAngle_f ()
 {
-    if (Cmd_Argc() < 4) {
-        Con_Printf ("Current sun shadow angle: %5.1f %5.1f %5.1f\n", state.sun_glangle[1], -state.sun_glangle[0], state.sun_glangle[2]);
-        Con_Printf ("Usage: r_shadow_sunangle <yaw> <pitch> <roll>\n");
-        return;
-    }
+	if (Cmd_Argc() < 4) {
+		Con_Printf ("Current sun shadow angle: %5.1f %5.1f %5.1f\n", state.sun_glangle[1], -state.sun_glangle[0], state.sun_glangle[2]);
+		Con_Printf ("Usage: r_shadow_sunangle <yaw> <pitch> <roll>\n");
+		return;
+	}
 
-    float yaw = Q_atof (Cmd_Argv(1));
-    float pitch = Q_atof (Cmd_Argv(2));
-    float roll = Q_atof (Cmd_Argv(3));
+	float yaw = Q_atof (Cmd_Argv(1));
+	float pitch = Q_atof (Cmd_Argv(2));
+	float roll = Q_atof (Cmd_Argv(3));
 
-    R_Shadow_SetupSun ((const vec3_t){ yaw, pitch, roll });
+	R_Shadow_SetupSun ((const vec3_t){ yaw, pitch, roll });
 }
 
 void R_Shadow_Init ()
@@ -98,17 +100,17 @@ void R_Shadow_Init ()
 
 static void R_Shadow_CreateBrushShaders ()
 {
-    if (!GL_CreateShaderFromVF (&shadow_brush_glsl.shader, shadow_brush_vertex_shader, shadow_brush_fragment_shader, 0, NULL)) {
-        Con_DWarning ("Failed to compile shadow shader\n");
-        return;
-    }
+	if (!GL_CreateShaderFromVF (&shadow_brush_glsl.shader, shadow_brush_vertex_shader, shadow_brush_fragment_shader, 0, NULL)) {
+		Con_DWarning ("Failed to compile shadow shader\n");
+		return;
+	}
 
-    shadow_brush_glsl.u_Tex = GL_GetUniformLocationFunc (shadow_brush_glsl.shader.program_id, "Tex");
-    shadow_brush_glsl.u_UseAlphaTest = GL_GetUniformLocationFunc (shadow_brush_glsl.shader.program_id, "UseAlphaTest");
-    shadow_brush_glsl.u_Alpha = GL_GetUniformLocationFunc (shadow_brush_glsl.shader.program_id, "Alpha");
-    shadow_brush_glsl.u_ShadowMatrix = GL_GetUniformLocationFunc (shadow_brush_glsl.shader.program_id, "ShadowMatrix");
-    shadow_brush_glsl.u_ModelMatrix = GL_GetUniformLocationFunc (shadow_brush_glsl.shader.program_id, "ModelMatrix");
-    shadow_brush_glsl.u_Debug = GL_GetUniformLocationFunc (shadow_brush_glsl.shader.program_id, "Debug");
+	shadow_brush_glsl.u_Tex = GL_GetUniformLocationFunc (shadow_brush_glsl.shader.program_id, "Tex");
+	shadow_brush_glsl.u_UseAlphaTest = GL_GetUniformLocationFunc (shadow_brush_glsl.shader.program_id, "UseAlphaTest");
+	shadow_brush_glsl.u_Alpha = GL_GetUniformLocationFunc (shadow_brush_glsl.shader.program_id, "Alpha");
+	shadow_brush_glsl.u_ShadowMatrix = GL_GetUniformLocationFunc (shadow_brush_glsl.shader.program_id, "ShadowMatrix");
+	shadow_brush_glsl.u_ModelMatrix = GL_GetUniformLocationFunc (shadow_brush_glsl.shader.program_id, "ModelMatrix");
+	shadow_brush_glsl.u_Debug = GL_GetUniformLocationFunc (shadow_brush_glsl.shader.program_id, "Debug");
 }
 
 #define pose1VertexAttrIndex 0
@@ -155,7 +157,7 @@ static void R_Shadow_CreateAliasShaders ()
 		q_snprintf(processedVertSource, sizeof(processedVertSource), shadow_alias_vertex_shader, defines);
 
 #if 0
-        GL_CreateShaderFromVF (&glsl->shader, processedVertSource, shadow_alias_fragment_shader);
+		GL_CreateShaderFromVF (&glsl->shader, processedVertSource, shadow_alias_fragment_shader);
 		int numbindings = sizeof(bindings) / sizeof(bindings[0]);
 		for (int i = 0; i < numbindings; i++) {
 			GL_BindAttribLocationFunc(glsl->shader.program_id, bindings[i].attrib, bindings[i].name);
@@ -183,7 +185,7 @@ static void R_Shadow_CreateAliasShaders ()
 			glsl->debugLoc = GL_GetUniformLocation (&glsl->shader.program_id, "Debug");
 			glsl->shadowMatrixLoc = GL_GetUniformLocation (&glsl->shader.program_id, "ShadowMatrix");
 			glsl->modelMatrixLoc = GL_GetUniformLocation (&glsl->shader.program_id, "ModelMatrix");
-            num_shadow_alias_glsl++;
+			num_shadow_alias_glsl++;
 		}
 	}
 #endif
@@ -191,30 +193,31 @@ static void R_Shadow_CreateAliasShaders ()
 
 static void R_Shadow_CreateFramebuffer()
 {
-    GL_GenFramebuffersFunc (1, &state.shadow_fbo);
-    GL_BindFramebufferFunc (GL_FRAMEBUFFER, state.shadow_fbo);
+	GL_GenFramebuffersFunc (1, &state.shadow_fbo);
+	GL_BindFramebufferFunc (GL_FRAMEBUFFER, state.shadow_fbo);
 
-    glGenTextures (1, &state.shadow_depth_tex);
-    glBindTexture (GL_TEXTURE_2D, state.shadow_depth_tex);
+	glGenTextures (1, &state.shadow_depth_tex);
+	glBindTexture (GL_TEXTURE_2D, state.shadow_depth_tex);
 
-    glTexImage2D (GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT16, SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
+	glTexImage2D (GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT16, SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
 
-    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
 
-    GL_FramebufferTextureFunc (GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, state.shadow_depth_tex, 0);
+	GL_FramebufferTextureFunc (GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, state.shadow_depth_tex, 0);
 
-    glDrawBuffer (GL_NONE); // No color buffer is drawn to.
+	glDrawBuffer (GL_NONE); // No color buffer is drawn to.
 
-    if (GL_CheckFramebufferStatusFunc(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        Con_Warning ("Failed to create Sun Shadow Framebuffer\n");
-        return;
-    }
+	if (GL_CheckFramebufferStatusFunc(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+		Con_Warning ("Failed to create Sun Shadow Framebuffer\n");
+		return;
+	}
 
-    GL_BindFramebufferFunc (GL_FRAMEBUFFER, 0);
+	glBindTexture (GL_TEXTURE_2D, 0);
+	GL_BindFramebufferFunc (GL_FRAMEBUFFER, 0);
 }
 
 //
@@ -357,6 +360,9 @@ void R_Shadow_SetupSun (vec3_t angle)
 	Matrix4_ViewMatrix (state.sun_glangle, pos, render_view_matrix);
 
 	Matrix4_Multiply (proj_matrix, render_view_matrix, state.shadow_pv_matrix);
+
+	// Ensure random texture is loaded cause we'll need it
+	GL_GetRandomTexture ();
 }
 
 //
@@ -370,10 +376,10 @@ qboolean r_drawingsunshadow = false;
 
 static void R_Shadow_DrawTextureChains (qmodel_t *model, entity_t *ent, texchain_t chain)
 {
-    float entalpha = (ent != NULL) ? ENTALPHA_DECODE(ent->alpha) : 1.0f;
+	float entalpha = (ent != NULL) ? ENTALPHA_DECODE(ent->alpha) : 1.0f;
 
 	glEnable (GL_BLEND);
-    glDisable (GL_CULL_FACE);
+	glDisable (GL_CULL_FACE);
 
 	GL_UseProgramFunc (shadow_brush_glsl.shader.program_id);
 	
@@ -710,7 +716,7 @@ void R_Shadow_DrawEntities ()
 		switch (currententity->model->type)
 		{
 			case mod_alias:
-                R_Shadow_DrawAliasModel (currententity);
+				R_Shadow_DrawAliasModel (currententity);
 				break;
 			case mod_brush:
 				R_Shadow_DrawBrushModel (currententity);
@@ -753,7 +759,7 @@ void R_Shadow_RenderShadowMap ()
 		GL_BindFramebufferFunc (GL_FRAMEBUFFER, 0);
 
 		// Restore the original viewport
-        
+		
 		int scale;
 
 		//johnfitz -- rewrote this section
@@ -768,7 +774,7 @@ void R_Shadow_RenderShadowMap ()
 		//johnfitz
 
 		R_MarkSurfaces (); // Mark surfaces here because we disabled in R_SetupView
-    }
+	}
 }
 
 void R_Shadow_GetDepthTextureAndMatrix (GLuint* out_texture, mat4_t out_matrix)
@@ -889,5 +895,5 @@ static const GLchar *shadow_alias_fragment_shader = \
 	"   if (Alpha < 0.1) { discard; }\n"
 	"   if (Debug == 1) { ccolor = vec4(gl_FragCoord.z); }\n"
 	"   else if (Debug == 2) { ccolor = texture2D(Tex, texCoord); }\n"
-	"   else { vec4 texcol = texture2D(Tex, texCoord); if (texcol.a<0.666) { discard; } else { fragmentdepth = gl_FragCoord.z; } }\n"
+	"   else { vec4 texcol = texture2D(Tex, texCoord); if (texcol.a<0.1) { discard; } else { fragmentdepth = gl_FragCoord.z; } }\n"
 	"}\n";
