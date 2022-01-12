@@ -362,6 +362,11 @@ gl_vertex_attribute_t GL_CreateNormalVertexAttribute();
 
 // gnemeth -- Higher-level shader
 
+typedef struct glsl_attrib_binding_s {
+	const char *name;
+	GLuint attrib;
+} glsl_attrib_binding_t;
+
 typedef struct gl_shader_s {
 	unsigned int program_id;
 	unsigned int vertex_shader;
@@ -369,7 +374,10 @@ typedef struct gl_shader_s {
 	unsigned int geometry_shader;
 } gl_shader_t;
 
-qboolean GL_CreateShaderFromVF(gl_shader_t* sh, const char* vert_source, const char* frag_source);
+qboolean GL_CreateShaderFromVF(
+	gl_shader_t* sh, const char* vert_source, const char* frag_source,
+	int numbindings, const glsl_attrib_binding_t *bindings
+);
 
 void GL_DestroyShader(gl_shader_t* sh);
 
@@ -449,11 +457,6 @@ extern struct lightmap_s *lightmaps;
 extern int lightmap_count;	//allocated lightmaps
 
 extern qboolean r_drawflat_cheatsafe, r_fullbright_cheatsafe, r_lightmap_cheatsafe, r_drawworld_cheatsafe; //johnfitz
-
-typedef struct glsl_attrib_binding_s {
-	const char *name;
-	GLuint attrib;
-} glsl_attrib_binding_t;
 
 extern float	map_wateralpha, map_lavaalpha, map_telealpha, map_slimealpha; //ericw
 extern float	map_fallbackalpha; //spike -- because we might want r_wateralpha to apply to teleporters while water itself wasn't watervised

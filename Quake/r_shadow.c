@@ -3,7 +3,7 @@
 // and point lights.
 //
 // TODO:
-// 		- Sample Shadow Map in water
+// 		- X Sample Shadow Map in water
 //		- Correctly render fence textures in shadow map
 //		- Implement Point lights shadows
 //		- Better sampling technique
@@ -98,7 +98,7 @@ void R_Shadow_Init ()
 
 static void R_Shadow_CreateBrushShaders ()
 {
-    if (!GL_CreateShaderFromVF (&shadow_brush_glsl.shader, shadow_brush_vertex_shader, shadow_brush_fragment_shader)) {
+    if (!GL_CreateShaderFromVF (&shadow_brush_glsl.shader, shadow_brush_vertex_shader, shadow_brush_fragment_shader, 0, NULL)) {
         Con_DWarning ("Failed to compile shadow shader\n");
         return;
     }
@@ -372,6 +372,7 @@ static void R_Shadow_DrawTextureChains (qmodel_t *model, entity_t *ent, texchain
 {
     float entalpha = (ent != NULL) ? ENTALPHA_DECODE(ent->alpha) : 1.0f;
 
+	glEnable (GL_BLEND);
     glDisable (GL_CULL_FACE);
 
 	GL_UseProgramFunc (shadow_brush_glsl.shader.program_id);
@@ -447,6 +448,7 @@ static void R_Shadow_DrawTextureChains (qmodel_t *model, entity_t *ent, texchain
 	GL_SelectTexture (GL_TEXTURE0);
 
 	glEnable (GL_CULL_FACE);
+	glDisable (GL_BLEND);
 }
 
 void R_Shadow_DrawBrushModel (entity_t* e)
@@ -887,5 +889,5 @@ static const GLchar *shadow_alias_fragment_shader = \
 	"   if (Alpha < 0.1) { discard; }\n"
 	"   if (Debug == 1) { ccolor = vec4(gl_FragCoord.z); }\n"
 	"   else if (Debug == 2) { ccolor = texture2D(Tex, texCoord); }\n"
-	"   else { fragmentdepth = gl_FragCoord.z; }\n"
+	"   else { vec4 texcol = texture2D(Tex, texCoord); if (texcol.a<0.666) { discard; } else { fragmentdepth = gl_FragCoord.z; } }\n"
 	"}\n";

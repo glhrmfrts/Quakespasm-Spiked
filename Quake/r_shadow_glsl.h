@@ -3,19 +3,19 @@
 //
 
 #define SHADOW_VERT_UNIFORMS_GLSL \
-    "uniform mat4 ShadowMatrix;\n"
+	"uniform mat4 ShadowMatrix;\n"
 
 #define SHADOW_FRAG_UNIFORMS_GLSL \
-    "uniform bool UseShadow;\n" \
-    "uniform float SunBrighten;\n" \
-    "uniform float SunDarken;\n" \
-    "uniform sampler2DShadow ShadowTex;\n"
+	"uniform bool UseShadow;\n" \
+	"uniform float SunBrighten;\n" \
+	"uniform float SunDarken;\n" \
+	"uniform sampler2DShadow ShadowTex;\n"
 
 #define SHADOW_VARYING_GLSL \
-    "varying vec3 ShadowCoord;\n"
+	"varying vec3 ShadowCoord;\n"
 
 #define SHADOW_GET_COORD_GLSL(vertName) \
-    "	ShadowCoord = (ShadowMatrix * " vertName ").xyz;\n"
+	"	ShadowCoord = (ShadowMatrix * " vertName ").xyz;\n"
 
 #define SHADOW_SAMPLE_GLSL \
 		"	if (UseShadow) {\n" \
@@ -24,9 +24,9 @@
 		"		float darken = SunDarken/4.0; float brighten=SunBrighten/4.0;\n" \
 		"		float shadowVis = 1.0;\n" \
 		"		for (int i=0;i<4;i++) {\n" \
-        "           if (shadow2D(ShadowTex, vec3(ShadowCoord.xy+poissonDisk[i]/700.0,ShadowCoord.z)).z < 1.0) {\n" \
-        "                shadowVis -= darken;\n" \
-        "           } else { shadowVis += brighten;\n }\n" \
-        "       }\n" \
-		"		result = result * shadowVis;\n" \
+		"           if (shadow2D(ShadowTex, vec3(ShadowCoord.xy+poissonDisk[i]/700.0,ShadowCoord.z)).z < 1.0) {\n" \
+		"                shadowVis -= darken;\n" \
+		"           } else { shadowVis += brighten;\n }\n" \
+		"       }\n" \
+		"		result = vec4(result.xyz * shadowVis, result.a);\n" \
 		"	}\n"

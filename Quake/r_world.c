@@ -587,6 +587,12 @@ static struct
 	GLuint light_scale;
 	GLuint alpha_scale;
 	GLuint time;
+
+	GLuint u_UseShadow;
+	GLuint u_ShadowMatrix;
+	GLuint u_ShadowTex;
+	GLuint u_SunBrighten;
+	GLuint u_SunDarken;
 } r_water[2];
 
 #define vertAttrIndex 0
@@ -616,7 +622,7 @@ static void GLWater_CreateShaders (void)
 	//    `gl_ModelViewProjectionMatrix * vec4(Vert, 1.0);`. Work around with
 	//    making Vert a vec4. (https://sourceforge.net/p/quakespasm/bugs/39/)
 	const GLchar *vertSource = \
-		"#version 110\n"
+		"#version 120\n"
 		"%s"
 		"\n"
 		"attribute vec4 Vert;\n"
@@ -625,9 +631,15 @@ static void GLWater_CreateShaders (void)
 		"attribute vec2 LMCoords;\n"
 		"varying vec2 tc_lm;\n"
 "#endif\n"
+
+		SHADOW_VERT_UNIFORMS_GLSL
+
 		"\n"
 		"varying float FogFragCoord;\n"
 		"varying vec2 tc_tex;\n"
+
+		SHADOW_VARYING_GLSL
+
 		"\n"
 		"void main()\n"
 		"{\n"
@@ -637,10 +649,13 @@ static void GLWater_CreateShaders (void)
 "#endif\n"
 		"	gl_Position = gl_ModelViewProjectionMatrix * Vert;\n"
 		"	FogFragCoord = gl_Position.w;\n"
+
+		SHADOW_GET_COORD_GLSL("Vert")
+
 		"}\n";
 
 	const GLchar *fragSource = \
-		"#version 110\n"
+		"#version 120\n"
 		"%s"
 		"\n"
 		"uniform sampler2D Tex;\n"
@@ -651,9 +666,15 @@ static void GLWater_CreateShaders (void)
 "#endif\n"
 		"uniform float Alpha;\n"
 		"uniform float WarpTime;\n"
+
+		SHADOW_FRAG_UNIFORMS_GLSL
+
 		"\n"
 		"varying float FogFragCoord;\n"
 		"varying vec2 tc_tex;\n"
+
+		SHADOW_VARYING_GLSL
+
 		"\n"
 		"void main()\n"
 		"{\n"
@@ -679,6 +700,9 @@ static void GLWater_CreateShaders (void)
 "#endif\n"
 		"	result.a *= Alpha;\n"
 		"	result = clamp(result, 0.0, 1.0);\n"
+
+		SHADOW_SAMPLE_GLSL
+
 		"	float fog = exp(-gl_Fog.density * gl_Fog.density * FogFragCoord * FogFragCoord);\n"
 		"	fog = clamp(fog, 0.0, 1.0);\n"
 		"	result.rgb = mix(gl_Fog.color.rgb, result.rgb, fog);\n"
@@ -686,8 +710,8 @@ static void GLWater_CreateShaders (void)
 		"}\n";
 
 	size_t i;
-	char vtext[1024];
-	char ftext[1024];
+	char vtext[1024*4];
+	char ftext[1024*4];
 	gl_glsl_water_able = false;
 
 	if (!gl_glsl_able)
@@ -697,16 +721,23 @@ static void GLWater_CreateShaders (void)
 	{
 		snprintf(vtext, sizeof(vtext), vertSource, modedefines[i]);
 		snprintf(ftext, sizeof(ftext), fragSource, modedefines[i]);
-		r_water[i].program = GL_CreateProgram (vtext, ftext, sizeof(bindings)/sizeof(bindings[0]), bindings);
-
-		if (r_water[i].program != 0)
+		gl_shader_t sh = {0};
+		qboolean compiled = GL_CreateShaderFromVF (&sh, vtext, ftext, sizeof(bindings)/sizeof(bindings[0]), bindings);
+		if (compiled)
 		{
+			r_water[i].program = sh.program_id;
+
 			// get uniform locations
 			GLuint texLoc				= GL_GetUniformLocation (&r_water[i].program, "Tex");
 			GLuint LMTexLoc				= (i?GL_GetUniformLocation (&r_water[i].program, "LMTex"):-1);
 			r_water[i].light_scale		= (i?GL_GetUniformLocation (&r_water[i].program, "LightScale"):-1);
 			r_water[i].alpha_scale		= GL_GetUniformLocation (&r_water[i].program, "Alpha");
 			r_water[i].time				= GL_GetUniformLocation (&r_water[i].program, "WarpTime");
+			r_water[i].u_UseShadow		= GL_GetUniformLocation (&r_water[i].program, "UseShadow");
+			r_water[i].u_ShadowTex		= GL_GetUniformLocation (&r_water[i].program, "ShadowTex");
+			r_water[i].u_ShadowMatrix	= GL_GetUniformLocation (&r_water[i].program, "ShadowMatrix");
+			r_water[i].u_SunBrighten	= GL_GetUniformLocation (&r_water[i].program, "SunBrighten");
+			r_water[i].u_SunDarken		= GL_GetUniformLocation (&r_water[i].program, "SunDarken");
 
 			if (!r_water[i].program)
 				return;
@@ -743,6 +774,12 @@ void R_DrawTextureChains_Water (qmodel_t *model, entity_t *ent, texchain_t chain
 
 	if (gl_glsl_water_able)
 	{
+		GLuint shadow_texture;
+		mat4_t shadow_matrix;
+		if (r_shadow_sun.value) {
+			R_Shadow_GetDepthTextureAndMatrix (&shadow_texture, shadow_matrix);
+		}
+
 		extern GLuint gl_bmodel_vbo;
 		int lastlightmap = -2;
 		int mode = -1;
@@ -794,6 +831,21 @@ void R_DrawTextureChains_Water (qmodel_t *model, entity_t *ent, texchain_t chain
 					if (r_water[mode].light_scale != -1)
 						GL_Uniform1fFunc (r_water[mode].light_scale, gl_overbright.value?2:1);
 					GL_Uniform1fFunc (r_water[mode].alpha_scale, entalpha);
+
+					if (r_shadow_sun.value) {
+						GL_Uniform1iFunc (r_water[mode].u_UseShadow, 1);
+						GL_Uniform1iFunc (r_water[mode].u_ShadowTex, 3);
+						GL_Uniform1fFunc (r_water[mode].u_SunBrighten, r_shadow_sunbrighten.value);
+						GL_Uniform1fFunc (r_water[mode].u_SunDarken, r_shadow_sundarken.value);
+						GL_UniformMatrix4fvFunc (r_water[mode].u_ShadowMatrix, 1, false, shadow_matrix);
+
+						GL_SelectTexture (GL_TEXTURE3);
+						glBindTexture (GL_TEXTURE_2D, shadow_texture);
+					}
+					else {
+						GL_Uniform1iFunc (r_water[mode].u_UseShadow, 0);
+					}
+
 					lastlightmap = s->lightmaptexturenum;
 				}
 				R_BatchSurface (s);
@@ -1026,13 +1078,8 @@ void GLWorld_CreateShaders (void)
 		return;
 
 	gl_shader_t sh = { 0 };
-	GL_CreateShaderFromVF(&sh, vertSource, fragSource);
+	GL_CreateShaderFromVF(&sh, vertSource, fragSource, countof(bindings), bindings);
 	r_world_program = sh.program_id;
-
-	int numbindings = sizeof(bindings)/sizeof(bindings[0]);
-	for (int i = 0; i < numbindings; i++) {
-		GL_BindAttribLocationFunc (r_world_program, bindings[i].attrib, bindings[i].name);
-	}
 	
 	if (r_world_program != 0)
 	{
@@ -1109,8 +1156,6 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 	GL_Uniform1iFunc (useOverbrightLoc, (int)gl_overbright.value);
 	GL_Uniform1iFunc (useAlphaTestLoc, 0);
 	GL_Uniform1fFunc (alphaLoc, entalpha);
-	GL_Uniform1fFunc (sunBrightenLoc, r_shadow_sunbrighten.value);
-	GL_Uniform1fFunc (sunDarkenLoc, r_shadow_sundarken.value);
 
 // gnemeth - get the shadow data
 	if (r_shadow_sun.value) {
@@ -1128,6 +1173,8 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 
 		GL_Uniform1iFunc (useShadowLoc, 1);
 		GL_Uniform1iFunc (shadowTexLoc, 3);
+		GL_Uniform1fFunc (sunBrightenLoc, r_shadow_sunbrighten.value);
+		GL_Uniform1fFunc (sunDarkenLoc, r_shadow_sundarken.value);
 		GL_UniformMatrix4fvFunc (shadowMatrixLoc, 1, false, shadow_matrix);
 		GL_UniformMatrix4fvFunc (modelMatrixLoc, 1, false, model_matrix);
 
