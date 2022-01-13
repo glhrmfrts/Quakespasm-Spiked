@@ -89,14 +89,22 @@ qboolean R_BackFaceCull (msurface_t *surf)
 	return false;
 }
 
-void R_MarkSurfacesForSunShadowMap ()
+void R_MarkSurfacesForLightShadowMap (r_shadow_light_t* light)
 {
-	mleaf_t		*leaf;
+	mleaf_t		*leaf, *viewleaf;
 	msurface_t	*surf, **mark;
 	int			i, j;
 	byte		*vis;
 
-	vis = Mod_NoVisPVS (cl.worldmodel);
+	switch (light->type) {
+	case r_shadow_light_type_sun:
+		vis = Mod_NoVisPVS (cl.worldmodel);
+		break;
+	case r_shadow_light_type_spot:
+		viewleaf = Mod_PointInLeaf (light->light_position, cl.worldmodel);
+		vis = Mod_LeafPVS (viewleaf, cl.worldmodel);
+		break;
+	}
 
 	// set all chains to null
 	for (i=0 ; i<cl.worldmodel->numtextures ; i++)
@@ -117,7 +125,7 @@ void R_MarkSurfacesForSunShadowMap ()
 				if (surf->visframe != r_visframecount)
 				{
 					surf->visframe = r_visframecount;
-					R_ChainSurface(surf, chain_world);
+					R_ChainSurface (surf, chain_world);
 				}
 			}
 

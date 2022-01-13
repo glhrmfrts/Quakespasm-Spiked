@@ -6,8 +6,13 @@
 // 		- X  Sample Shadow Map in water
 //		- X? Correctly render fence textures in shadow map
 //		- XX Use Stratified Poisson Sampling
+//		- Implement Spot lights shadows
 //		- Implement Point lights shadows
 //		- Fix sampling
+//		- Implement HDR rendering
+//		- Implement MSAA support
+//		- Implement Motion Blur
+//		- Implement SSR for water
 //
 
 #include "quakedef.h"
@@ -15,8 +20,11 @@
 #include "gl_random_texture.h"
 
 enum {
-	SHADOW_WIDTH = 1024*4,
-	SHADOW_HEIGHT = 1024*4,
+	SUN_SHADOW_WIDTH = 1024*4,
+	SUN_SHADOW_HEIGHT = 1024*4,
+
+	SPOT_SHADOW_WIDTH = 1024,
+	SPOT_SHADOW_HEIGHT = 1024,
 };
 
 cvar_t r_shadow_sun = {"r_shadow_sun", "1", CVAR_ARCHIVE, 1.0f};
@@ -188,7 +196,7 @@ static void R_Shadow_CreateAliasShaders ()
 #endif
 }
 
-static void R_Shadow_CreateFramebuffer(r_shadow_light_t* light)
+static void R_Shadow_CreateFramebuffer (r_shadow_light_t* light)
 {
 	GL_GenFramebuffersFunc (1, &light->shadow_map_fbo);
 	GL_BindFramebufferFunc (GL_FRAMEBUFFER, light->shadow_map_fbo);
@@ -196,7 +204,7 @@ static void R_Shadow_CreateFramebuffer(r_shadow_light_t* light)
 	glGenTextures (1, &light->shadow_map_texture);
 	glBindTexture (GL_TEXTURE_2D, light->shadow_map_texture);
 
-	glTexImage2D (GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT16, SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
+	glTexImage2D (GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT16, light->shadow_map_width, light->shadow_map_height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
 
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -273,7 +281,10 @@ void R_Shadow_SetupSun (vec3_t angle)
 
 	if (!sun_light) {
 		sun_light = calloc (1, sizeof(r_shadow_light_t));
+		sun_light->enabled = true;
 		sun_light->type = r_shadow_light_type_sun;
+		sun_light->shadow_map_width = SUN_SHADOW_WIDTH;
+		sun_light->shadow_map_height = SUN_SHADOW_HEIGHT;
 		sun_light->next = first_light;
 		first_light = sun_light;
 
@@ -378,18 +389,50 @@ void R_Shadow_SetupSun (vec3_t angle)
 	GL_GetRandomTexture ();
 }
 
+#if 1
+void R_Shadow_AddSpotLight (const vec3_t pos, const vec3_t angles, float fov, float zfar)
+{
+	r_shadow_light_t* l = calloc (1, sizeof(r_shadow_light_t));
+	l->enabled = true;
+	l->shadow_map_width = SPOT_SHADOW_WIDTH;
+	l->shadow_map_height = SPOT_SHADOW_HEIGHT;
+
+	r_shadow_light_t* l = calloc (1, sizeof(r_shadow_light_t));
+	l->enabled = true;
+
+	VectorCopy (pos, l->light_position);
+
+	l->light_angles[0] = -angles[1];
+	l->light_angles[1] = angles[0];
+	l->light_angles[2] = angles[2];
+
+	vec3_t fwd, right, up;
+	AngleVectors (l->light_angles, fwd, right, up);
+	VectorCopy (fwd, l->light_normal);
+
+	mat4_t view_matrix, proj_matrix;
+	Matrix4_ViewMatrix (l->light_angles, l->light_position, view_matrix);
+	Matrix4_ProjectionMatrix (fov, fov, 1.0f, zfar, false, 0, 0, proj_matrix);
+	Matrix4_Multiply (proj_matrix, view_matrix, l->shadow_map_projview);
+	memcpy (l->world_to_shadow_map, l->shadow_map_projview, sizeof(l->shadow_map_projview));
+
+	R_Shadow_CreateFramebuffer (l);
+
+// add to the light list
+	l->next = first_light;
+	first_light = l;
+}
+#endif
+
 //
 // Functions for drawing stuff to the Shadow Map
 //
 
 extern GLuint gl_bmodel_vbo;
-extern qboolean r_drawingsunshadow;
 
-qboolean r_drawingsunshadow = false;
-
-static void R_Shadow_DrawTextureChains (qmodel_t *model, entity_t *ent, texchain_t chain)
+static void R_Shadow_DrawTextureChains (r_shadow_light_t* light, qmodel_t *model, entity_t *ent, texchain_t chain)
 {
-	if (!r_shadow_sunworldcast.value) { return; }
+	if (light->type == r_shadow_light_type_sun && !r_shadow_sunworldcast.value) { return; }
 
 	float entalpha = (ent != NULL) ? ENTALPHA_DECODE(ent->alpha) : 1.0f;
 
@@ -412,7 +455,7 @@ static void R_Shadow_DrawTextureChains (qmodel_t *model, entity_t *ent, texchain
 	GL_Uniform1iFunc (shadow_brush_glsl.u_Tex, 0);
 	GL_Uniform1iFunc (shadow_brush_glsl.u_UseAlphaTest, 0);
 	GL_Uniform1fFunc (shadow_brush_glsl.u_Alpha, entalpha);
-	GL_UniformMatrix4fvFunc (shadow_brush_glsl.u_ShadowMatrix, 1, false, (const GLfloat*)sun_light->shadow_map_projview);
+	GL_UniformMatrix4fvFunc (shadow_brush_glsl.u_ShadowMatrix, 1, false, (const GLfloat*)light->shadow_map_projview);
 	GL_Uniform1iFunc (shadow_brush_glsl.u_Debug, r_shadow_sundebug.value);
 
 	mat4_t model_matrix;
@@ -472,7 +515,7 @@ static void R_Shadow_DrawTextureChains (qmodel_t *model, entity_t *ent, texchain
 	glDisable (GL_BLEND);
 }
 
-void R_Shadow_DrawBrushModel (entity_t* e)
+void R_Shadow_DrawBrushModel (r_shadow_light_t* light, entity_t* e)
 {
 	int			i, k;
 	msurface_t	*psurf;
@@ -497,7 +540,7 @@ void R_Shadow_DrawBrushModel (entity_t* e)
 		// rs_brushpolys++;
 	}
 
-	R_Shadow_DrawTextureChains (clmodel, e, chain_model);
+	R_Shadow_DrawTextureChains (light, clmodel, e, chain_model);
 }
 
 #if 1
@@ -551,7 +594,7 @@ static void *GLARB_GetNormalOffset_MD3 (aliashdr_t *hdr, int pose)
 }
 
 
-void R_Shadow_DrawAliasFrame (shadow_aliasglsl_t* glsl, aliashdr_t* paliashdr, lerpdata_t* lerpdata, entity_t* ent)
+void R_Shadow_DrawAliasFrame (r_shadow_light_t* light, shadow_aliasglsl_t* glsl, aliashdr_t* paliashdr, lerpdata_t* lerpdata, entity_t* ent)
 {
 	float entalpha = (ent != NULL) ? ENTALPHA_DECODE(ent->alpha) : 1.0f;
 
@@ -631,7 +674,7 @@ void R_Shadow_DrawAliasFrame (shadow_aliasglsl_t* glsl, aliashdr_t* paliashdr, l
 		GL_Uniform4fvFunc (glsl->bonesLoc, paliashdr->numbones*3, lerpdata->bonestate->mat);
 	GL_Uniform1iFunc (glsl->texLoc, 0);
 	GL_Uniform1fFunc (glsl->alphaLoc, entalpha);
-	GL_UniformMatrix4fvFunc (glsl->shadowMatrixLoc, 1, false, (const GLfloat*)sun_light->shadow_map_projview);
+	GL_UniformMatrix4fvFunc (glsl->shadowMatrixLoc, 1, false, (const GLfloat*)light->shadow_map_projview);
 	GL_Uniform1iFunc (glsl->debugLoc, r_shadow_sundebug.value);
 
 	mat4_t model_matrix;
@@ -661,7 +704,7 @@ void R_Shadow_DrawAliasFrame (shadow_aliasglsl_t* glsl, aliashdr_t* paliashdr, l
 	GL_BindBuffer (GL_ELEMENT_ARRAY_BUFFER, 0);
 }
 
-void R_Shadow_DrawAliasModel (entity_t *e)
+void R_Shadow_DrawAliasModel (r_shadow_light_t* light, entity_t *e)
 {
 	shadow_aliasglsl_t *glsl;
 	aliashdr_t	*paliashdr;
@@ -695,7 +738,7 @@ void R_Shadow_DrawAliasModel (entity_t *e)
 		//
 		// draw it
 		//
-		R_Shadow_DrawAliasFrame (glsl, paliashdr, &lerpdata, e);
+		R_Shadow_DrawAliasFrame (light, glsl, paliashdr, &lerpdata, e);
 
 		if (!paliashdr->nextsurface)
 			break;
@@ -707,7 +750,7 @@ cleanup:
 }
 #endif
 
-void R_Shadow_DrawEntities ()
+void R_Shadow_DrawEntities (r_shadow_light_t* light)
 {
 	int		i;
 
@@ -731,10 +774,10 @@ void R_Shadow_DrawEntities ()
 		switch (currententity->model->type)
 		{
 			case mod_alias:
-				R_Shadow_DrawAliasModel (currententity);
+				R_Shadow_DrawAliasModel (light, currententity);
 				break;
 			case mod_brush:
-				R_Shadow_DrawBrushModel (currententity);
+				R_Shadow_DrawBrushModel (light, currententity);
 				break;
 			case mod_sprite:
 				//R_DrawSpriteModel (currententity);
@@ -746,31 +789,54 @@ void R_Shadow_DrawEntities ()
 	}
 }
 
-void R_Shadow_RenderShadowMap ()
+static void R_Shadow_PrepareToRender (r_shadow_light_t* light)
 {
-	if (!r_shadow_sun.value) { return; }
-
-	r_drawingsunshadow = true;
-
-	R_MarkSurfacesForSunShadowMap ();
-
+	R_MarkSurfacesForLightShadowMap (light);
 	if (r_shadow_sundebug.value) {
 		glViewport (0, 0, 1024, 1024);
 		glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	}
 	else {
-		GL_BindFramebufferFunc (GL_FRAMEBUFFER, sun_light->shadow_map_fbo);
-		glViewport (0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
+		GL_BindFramebufferFunc (GL_FRAMEBUFFER, light->shadow_map_fbo);
+		glViewport (0, 0, light->shadow_map_width, light->shadow_map_height);
 		glClear (GL_DEPTH_BUFFER_BIT);
 	}
+}
 
-	R_Shadow_DrawTextureChains (cl.worldmodel, NULL, chain_world);
+static void R_Shadow_RenderSunShadowMap (r_shadow_light_t* light)
+{
+	if (!r_shadow_sun.value) { return; }
 
-	R_Shadow_DrawEntities ();
+	R_Shadow_PrepareToRender (light);
+	R_Shadow_DrawTextureChains (light, cl.worldmodel, NULL, chain_world);
+	R_Shadow_DrawEntities (light);
+}
 
-	r_drawingsunshadow = false;
+static void R_Shadow_RenderSpotShadowMap (r_shadow_light_t* light)
+{
+	R_Shadow_PrepareToRender (light);
+	R_Shadow_DrawTextureChains (light, cl.worldmodel, NULL, chain_world);
+	R_Shadow_DrawEntities (light);
+}
 
-	if (!r_shadow_sundebug.value) {
+void R_Shadow_RenderShadowMap ()
+{
+	r_shadow_light_t* light = NULL;
+
+	for (light = first_light; light; light = light->next) {
+		switch (light->type) {
+		case r_shadow_light_type_sun:
+			R_Shadow_RenderSunShadowMap (light);
+			break;
+		case r_shadow_light_type_spot:
+			R_Shadow_RenderSpotShadowMap (light);
+			break;
+		}
+	}
+
+	// light != NULL -> at least one light was rendered
+
+	if (!r_shadow_sundebug.value && light != NULL) {
 		GL_BindFramebufferFunc (GL_FRAMEBUFFER, 0);
 
 		// Restore the original viewport

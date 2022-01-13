@@ -237,6 +237,7 @@ extern cvar_t r_shadow_sundarken;
 
 typedef enum r_shadow_light_type {
 	r_shadow_light_type_sun,
+	r_shadow_light_type_spot,
 	r_shadow_light_type_point,
 } r_shadow_light_type_t;
 
@@ -244,8 +245,11 @@ typedef struct r_shadow_light_s {
 	r_shadow_light_type_t type;
 	qboolean enabled;
 
+	vec3_t light_position;
 	vec3_t light_normal;
 	vec3_t light_angles; // (pitch yaw roll)
+	int shadow_map_width;
+	int shadow_map_height;
 	GLuint shadow_map_fbo;
 	GLuint shadow_map_texture;
 	mat4_t shadow_map_projview;
@@ -267,7 +271,7 @@ void R_Shadow_RenderShadowMap ();
 r_shadow_light_t* R_Shadow_GetSunLight ();
 
 
-void R_MarkSurfacesForSunShadowMap ();
+void R_MarkSurfacesForLightShadowMap (r_shadow_light_t* light);
 
 #endif	/* _QUAKE_RENDER_H */
 
