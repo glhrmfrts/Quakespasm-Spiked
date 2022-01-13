@@ -1066,7 +1066,7 @@ void GL_BuildBModelVertexBuffer (void)
 	}
 	
 // build vertex array
-	varray_bytes = VERTEXSIZE * sizeof(float) * numverts;
+	varray_bytes = VBO_VERTEXSIZE * sizeof(float) * numverts;
 	varray = (float *) malloc (varray_bytes);
 	varray_index = 0;
 	
@@ -1080,7 +1080,27 @@ void GL_BuildBModelVertexBuffer (void)
 		{
 			msurface_t *s = &m->surfaces[i];
 			s->vbo_firstvert = varray_index;
-			memcpy (&varray[VERTEXSIZE * varray_index], s->polys->verts, VERTEXSIZE * sizeof(float) * s->numedges);
+
+			const float* vert = s->polys->verts;
+			const float* vbovert = &varray[VBO_VERTEXSIZE * varray_index];
+
+			vec3_t normal;
+			if (s->flags & SURF_PLANEBACK) {
+				normal[0] = -s->plane->normal[0];
+				normal[1] = -s->plane->normal[1];
+				normal[2] = -s->plane->normal[2];
+			}
+			else {
+				VectorCopy (s->plane->normal, normal);
+			}
+
+			for (int vertindex = 0; vertindex < s->numedges; vertindex++) {
+				memcpy (vbovert, vert, VERTEXSIZE * sizeof(float));
+				memcpy (vbovert+VERTEXSIZE, normal, sizeof(normal));
+				vert += VERTEXSIZE;
+				vbovert += VBO_VERTEXSIZE;
+			}
+
 			varray_index += s->numedges;
 		}
 	}
@@ -1094,7 +1114,27 @@ void GL_BuildBModelVertexBuffer (void)
 		{
 			msurface_t *s = &m->surfaces[i];
 			s->vbo_firstvert = varray_index;
-			memcpy (&varray[VERTEXSIZE * varray_index], s->polys->verts, VERTEXSIZE * sizeof(float) * s->numedges);
+
+			const float* vert = s->polys->verts;
+			const float* vbovert = &varray[VBO_VERTEXSIZE * varray_index];
+
+			vec3_t normal;
+			if (s->flags & SURF_PLANEBACK) {
+				normal[0] = -s->plane->normal[0];
+				normal[1] = -s->plane->normal[1];
+				normal[2] = -s->plane->normal[2];
+			}
+			else {
+				VectorCopy (s->plane->normal, normal);
+			}
+
+			for (int vertindex = 0; vertindex < s->numedges; vertindex++) {
+				memcpy (vbovert, vert, VERTEXSIZE * sizeof(float));
+				memcpy (vbovert+VERTEXSIZE, normal, sizeof(normal));
+				vert += VERTEXSIZE;
+				vbovert += VBO_VERTEXSIZE;
+			}
+
 			varray_index += s->numedges;
 		}
 	}

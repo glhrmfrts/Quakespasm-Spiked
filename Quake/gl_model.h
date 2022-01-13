@@ -118,7 +118,8 @@ typedef struct
 	int			flags;
 } mtexinfo_t;
 
-#define	VERTEXSIZE	7
+#define	VERTEXSIZE	7 
+#define VBO_VERTEXSIZE 10 // gnemeth - changed from 7 to 10 to include normals
 
 typedef struct glpoly_s
 {

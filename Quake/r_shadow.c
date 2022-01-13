@@ -23,15 +23,7 @@ cvar_t r_shadow_sun = {"r_shadow_sun", "1", CVAR_ARCHIVE, 1.0f};
 cvar_t r_shadow_sundebug = {"r_shadow_sundebug", "0", CVAR_NONE, 0.0f};
 cvar_t r_shadow_sunbrighten = {"r_shadow_sunbrighten", "0.2", CVAR_NONE, 0.2f};
 cvar_t r_shadow_sundarken = {"r_shadow_sundarken", "0.4", CVAR_NONE, 0.4f};
-
-static struct {
-	vec3_t sun_glangle;
-	gl_shader_t shadow_alias_shader;
-	mat4_t shadow_pv_matrix;
-	GLuint shadow_fbo;
-	GLuint shadow_depth_tex;
-	qboolean ok;
-} state;
+cvar_t r_shadow_sunworldcast = {"r_shadow_sunworldcast", "1", CVAR_ARCHIVE, 1.0f};
 
 static struct {
 	gl_shader_t shader;
@@ -65,19 +57,23 @@ typedef struct {
 static int num_shadow_alias_glsl;
 static shadow_aliasglsl_t shadow_alias_glsl[ALIAS_GLSL_MODES];
 
+static vec3_t current_sun_pos;
+static vec3_t debug_sun_pos;
+static qboolean debug_override_sun_pos;
+
+static r_shadow_light_t* sun_light;
+static r_shadow_light_t* first_light;
+
 static const char* shadow_brush_vertex_shader;
 static const char* shadow_brush_fragment_shader;
 static const char *shadow_alias_vertex_shader;
 static const char *shadow_alias_fragment_shader;
 
-static vec3_t current_sun_pos;
-static vec3_t debug_sun_pos;
-static qboolean debug_override_sun_pos;
-
 static void R_Shadow_SetAngle_f ()
 {
 	if (Cmd_Argc() < 4) {
-		Con_Printf ("Current sun shadow angle: %5.1f %5.1f %5.1f\n", state.sun_glangle[1], -state.sun_glangle[0], state.sun_glangle[2]);
+		Con_Printf ("Current sun shadow angle: %5.1f %5.1f %5.1f\n",
+			sun_light->light_angles[1], sun_light->light_angles[0], sun_light->light_angles[2]);
 		Con_Printf ("Usage: r_shadow_sunangle <yaw> <pitch> <roll>\n");
 		return;
 	}
@@ -95,6 +91,7 @@ void R_Shadow_Init ()
 	Cvar_RegisterVariable (&r_shadow_sundebug);
 	Cvar_RegisterVariable (&r_shadow_sunbrighten);
 	Cvar_RegisterVariable (&r_shadow_sundarken);
+	Cvar_RegisterVariable (&r_shadow_sunworldcast);
 	Cmd_AddCommand ("r_shadow_sunangle", R_Shadow_SetAngle_f);
 }
 
@@ -191,13 +188,13 @@ static void R_Shadow_CreateAliasShaders ()
 #endif
 }
 
-static void R_Shadow_CreateFramebuffer()
+static void R_Shadow_CreateFramebuffer(r_shadow_light_t* light)
 {
-	GL_GenFramebuffersFunc (1, &state.shadow_fbo);
-	GL_BindFramebufferFunc (GL_FRAMEBUFFER, state.shadow_fbo);
+	GL_GenFramebuffersFunc (1, &light->shadow_map_fbo);
+	GL_BindFramebufferFunc (GL_FRAMEBUFFER, light->shadow_map_fbo);
 
-	glGenTextures (1, &state.shadow_depth_tex);
-	glBindTexture (GL_TEXTURE_2D, state.shadow_depth_tex);
+	glGenTextures (1, &light->shadow_map_texture);
+	glBindTexture (GL_TEXTURE_2D, light->shadow_map_texture);
 
 	glTexImage2D (GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT16, SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
 
@@ -207,7 +204,7 @@ static void R_Shadow_CreateFramebuffer()
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
 
-	GL_FramebufferTextureFunc (GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, state.shadow_depth_tex, 0);
+	GL_FramebufferTextureFunc (GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, light->shadow_map_texture, 0);
 
 	glDrawBuffer (GL_NONE); // No color buffer is drawn to.
 
@@ -273,8 +270,14 @@ void R_Shadow_SetupSun (vec3_t angle)
 	if (num_shadow_alias_glsl < ALIAS_GLSL_MODES) {
 		R_Shadow_CreateAliasShaders ();
 	}
-	if (!state.shadow_depth_tex) {
-		R_Shadow_CreateFramebuffer ();
+
+	if (!sun_light) {
+		sun_light = calloc (1, sizeof(r_shadow_light_t));
+		sun_light->type = r_shadow_light_type_sun;
+		sun_light->next = first_light;
+		first_light = sun_light;
+
+		R_Shadow_CreateFramebuffer (sun_light);
 	}
 
 	//
@@ -282,9 +285,9 @@ void R_Shadow_SetupSun (vec3_t angle)
 	// with other mapping options, but Quake internally accepts (Pitch Yaw Roll)
 	// so here we need to convert from one to the other.
 	//
-	state.sun_glangle[0] = -angle[1];
-	state.sun_glangle[1] = angle[0];
-	state.sun_glangle[2] = angle[2];
+	sun_light->light_angles[0] = -angle[1];
+	sun_light->light_angles[1] = angle[0];
+	sun_light->light_angles[2] = angle[2];
 
 	vec3_t pos = {0,0,0};
 	vec3_t mins;
@@ -309,8 +312,10 @@ void R_Shadow_SetupSun (vec3_t angle)
 	VectorCopy (pos, current_sun_pos);
 
 	vec3_t fwd, right, up;
-	AngleVectors (state.sun_glangle, fwd, right, up);
+	AngleVectors (sun_light->light_angles, fwd, right, up);
 	Con_Printf ("fwd: (%f, %f, %f)\n", fwd[0], fwd[1], fwd[2]);
+
+	VectorCopy (fwd, sun_light->light_normal);
 
 	Con_Printf ("mins.x: %f, maxs.x: %f\n", mins[0], maxs[0]);
 	Con_Printf ("mins.y: %f, maxs.y: %f\n", mins[1], maxs[1]);
@@ -318,10 +323,10 @@ void R_Shadow_SetupSun (vec3_t angle)
 	// Con_Printf("view_mins.z: %f, view_maxs.z: %f\n", view_mins[2], view_maxs[2]);
 
 	vec3_t proj_mins, proj_maxs;
-	R_Shadow_GetWorldProjectionBounds (mins, maxs, state.sun_glangle, proj_mins, proj_maxs);
+	R_Shadow_GetWorldProjectionBounds (mins, maxs, sun_light->light_angles, proj_mins, proj_maxs);
 
 	// Don't ask me why but to get the correct near and far Z we have to use this angles.
-	vec3_t tolight_angles = { -state.sun_glangle[0], state.sun_glangle[1] + 180.0f, state.sun_glangle[2] };
+	vec3_t tolight_angles = { -sun_light->light_angles[0], sun_light->light_angles[1] + 180.0f, sun_light->light_angles[2] };
 
 	vec3_t tl_proj_mins, tl_proj_maxs;
 	R_Shadow_GetWorldProjectionBounds (mins, maxs, tolight_angles, tl_proj_mins, tl_proj_maxs);
@@ -357,9 +362,17 @@ void R_Shadow_SetupSun (vec3_t angle)
 	// Matrix4_ProjectionMatrix(r_fovx, r_fovy, 0.1f, 16384, false, 0, 0, proj_matrix);
 
 	mat4_t render_view_matrix;
-	Matrix4_ViewMatrix (state.sun_glangle, pos, render_view_matrix);
+	Matrix4_ViewMatrix (sun_light->light_angles, pos, render_view_matrix);
 
-	Matrix4_Multiply (proj_matrix, render_view_matrix, state.shadow_pv_matrix);
+	Matrix4_Multiply (proj_matrix, render_view_matrix, sun_light->shadow_map_projview);
+
+	mat4_t shadow_bias_matrix = {
+		0.5, 0.0, 0.0, 0.0,
+		0.0, 0.5, 0.0, 0.0,
+		0.0, 0.0, 0.5, 0.0,
+		0.5, 0.5, 0.5, 1.0
+	};
+	Matrix4_Multiply (shadow_bias_matrix, sun_light->shadow_map_projview, sun_light->world_to_shadow_map);
 
 	// Ensure random texture is loaded cause we'll need it
 	GL_GetRandomTexture ();
@@ -376,6 +389,8 @@ qboolean r_drawingsunshadow = false;
 
 static void R_Shadow_DrawTextureChains (qmodel_t *model, entity_t *ent, texchain_t chain)
 {
+	if (!r_shadow_sunworldcast.value) { return; }
+
 	float entalpha = (ent != NULL) ? ENTALPHA_DECODE(ent->alpha) : 1.0f;
 
 	glEnable (GL_BLEND);
@@ -388,16 +403,16 @@ static void R_Shadow_DrawTextureChains (qmodel_t *model, entity_t *ent, texchain
 	GL_BindBuffer (GL_ELEMENT_ARRAY_BUFFER, 0); // indices come from client memory!
 
 	GL_EnableVertexAttribArrayFunc (0);
-	GL_VertexAttribPointerFunc (0, 3, GL_FLOAT, GL_FALSE, VERTEXSIZE * sizeof(float), ((float *)0));
+	GL_VertexAttribPointerFunc (0, 3, GL_FLOAT, GL_FALSE, VBO_VERTEXSIZE * sizeof(float), ((float *)0));
 
 	GL_EnableVertexAttribArrayFunc (1);
-	GL_VertexAttribPointerFunc (1, 2, GL_FLOAT, GL_FALSE, VERTEXSIZE * sizeof(float), ((float*)0) + 3);
+	GL_VertexAttribPointerFunc (1, 2, GL_FLOAT, GL_FALSE, VBO_VERTEXSIZE * sizeof(float), ((float*)0) + 3);
 	
 // set uniforms
 	GL_Uniform1iFunc (shadow_brush_glsl.u_Tex, 0);
 	GL_Uniform1iFunc (shadow_brush_glsl.u_UseAlphaTest, 0);
 	GL_Uniform1fFunc (shadow_brush_glsl.u_Alpha, entalpha);
-	GL_UniformMatrix4fvFunc (shadow_brush_glsl.u_ShadowMatrix, 1, false, (const GLfloat*)state.shadow_pv_matrix);
+	GL_UniformMatrix4fvFunc (shadow_brush_glsl.u_ShadowMatrix, 1, false, (const GLfloat*)sun_light->shadow_map_projview);
 	GL_Uniform1iFunc (shadow_brush_glsl.u_Debug, r_shadow_sundebug.value);
 
 	mat4_t model_matrix;
@@ -616,7 +631,7 @@ void R_Shadow_DrawAliasFrame (shadow_aliasglsl_t* glsl, aliashdr_t* paliashdr, l
 		GL_Uniform4fvFunc (glsl->bonesLoc, paliashdr->numbones*3, lerpdata->bonestate->mat);
 	GL_Uniform1iFunc (glsl->texLoc, 0);
 	GL_Uniform1fFunc (glsl->alphaLoc, entalpha);
-	GL_UniformMatrix4fvFunc (glsl->shadowMatrixLoc, 1, false, (const GLfloat*)state.shadow_pv_matrix);
+	GL_UniformMatrix4fvFunc (glsl->shadowMatrixLoc, 1, false, (const GLfloat*)sun_light->shadow_map_projview);
 	GL_Uniform1iFunc (glsl->debugLoc, r_shadow_sundebug.value);
 
 	mat4_t model_matrix;
@@ -744,7 +759,7 @@ void R_Shadow_RenderShadowMap ()
 		glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	}
 	else {
-		GL_BindFramebufferFunc (GL_FRAMEBUFFER, state.shadow_fbo);
+		GL_BindFramebufferFunc (GL_FRAMEBUFFER, sun_light->shadow_map_fbo);
 		glViewport (0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
 		glClear (GL_DEPTH_BUFFER_BIT);
 	}
@@ -777,17 +792,9 @@ void R_Shadow_RenderShadowMap ()
 	}
 }
 
-void R_Shadow_GetDepthTextureAndMatrix (GLuint* out_texture, mat4_t out_matrix)
+r_shadow_light_t* R_Shadow_GetSunLight ()
 {
-	*out_texture = state.shadow_depth_tex;
-
-	mat4_t shadow_bias_matrix = {
-		0.5, 0.0, 0.0, 0.0,
-		0.0, 0.5, 0.0, 0.0,
-		0.0, 0.0, 0.5, 0.0,
-		0.5, 0.5, 0.5, 1.0
-	};
-	Matrix4_Multiply (shadow_bias_matrix, state.shadow_pv_matrix, out_matrix);
+	return sun_light;
 }
 
 static const GLchar *shadow_brush_vertex_shader = \
@@ -822,7 +829,7 @@ static const GLchar *shadow_brush_fragment_shader = \
 	"{\n"
 	"   if (Debug == 1) { ccolor = vec4(gl_FragCoord.z); }\n"
 	"   else if (Debug == 2) { ccolor = texture2D(Tex, texCoord); }\n"
-	"   else { fragmentdepth = gl_FragCoord.z; }\n"
+	"   else { vec4 texcol = texture2D(Tex, texCoord); if (texcol.a<0.1) { discard; } else { fragmentdepth = gl_FragCoord.z; } }\n"
 	"}\n";
 
 

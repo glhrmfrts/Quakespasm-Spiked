@@ -34,7 +34,8 @@
 	"uniform float SunBrighten;\n" \
 	"uniform float SunDarken;\n" \
 	"uniform sampler2DShadow ShadowTex;\n" \
-	"uniform sampler2D RandomTex;\n"
+	"uniform sampler2D RandomTex;\n" \
+	"uniform vec3 SunLightNormal;\n"
 
 #define SHADOW_VARYING_GLSL \
 	"varying vec3 ShadowCoord;\n" \
@@ -44,17 +45,18 @@
 	"	ShadowCoord = (ShadowMatrix * " vertName ").xyz;\n" \
 	"	WorldCoord = (" vertName ").xyz;\n"
 
-#define SHADOW_SAMPLE_GLSL \
+#define SHADOW_SAMPLE_GLSL(vertNormal) \
 		"	if (UseShadow) {\n" \
 			SHADOW_POISSON_DISK_GLSL \
-		"		float bias = 0.005;\n" \
+		"		float bias = 0.010;\n" \
 		"		float darken = SunDarken/6.0; float brighten=SunBrighten/6.0;\n" \
 		"		float shadowVis = 1.0;\n" \
+		"		float lightFactor = -dot(" vertNormal ", SunLightNormal);\n" \
 		"		for (int i=0;i<6;i++) {\n" \
 		"			int index = i;//int(floor(16.0*texture2D(RandomTex, (WorldCoord.xy+WorldCoord.z)*i).r));\n" \
-		"           if (shadow2D(ShadowTex, vec3(ShadowCoord.xy+poissonDisk[index]/800.0,ShadowCoord.z-bias)).z < 1.0) {\n" \
+		"           if (shadow2D(ShadowTex, vec3(ShadowCoord.xy+poissonDisk[index]/800.0,ShadowCoord.z-(bias*lightFactor))).z < 1.0) {\n" \
 		"                shadowVis -= darken;\n" \
-		"           } else { shadowVis += brighten;\n }\n" \
+		"           } else { shadowVis += brighten * lightFactor;\n }\n" \
 		"       }\n" \
 		"		result = vec4(result.xyz * shadowVis, result.a);\n" \
 		"	}\n"

@@ -83,6 +83,7 @@ typedef struct
 	GLuint randomTexLoc;
 	GLuint shadowMatrixLoc;
 	GLuint modelMatrixLoc;
+	GLuint normalMatrixLoc;
 	GLuint sunBrightenLoc;
 	GLuint sunDarkenLoc;
 } aliasglsl_t;
@@ -193,6 +194,7 @@ void GLAlias_CreateShaders (void)
 
 		"\n"
 		"varying float FogFragCoord;\n"
+		"varying vec3 v_Normal;\n"
 		"\n"
 
 		SHADOW_VARYING_GLSL
@@ -227,6 +229,7 @@ void GLAlias_CreateShaders (void)
 		"	vec4 lerpedVert = (vec4(Pose1Vert.xyz, 1.0) * wmat);\n"
 		"	float dot1 = r_avertexnormal_dot((vec4(Pose1Vert.xyz, 0.0) * wmat).xyz);\n"
 		"#else\n"
+		"	v_Normal = mix(Pose1Normal, Pose2Normal, Blend);\n"
 		"	vec4 lerpedVert = mix(vec4(Pose1Vert.xyz, 1.0), vec4(Pose2Vert.xyz, 1.0), Blend);\n"
 		"	float dot1 = mix(r_avertexnormal_dot(Pose1Normal), r_avertexnormal_dot(Pose2Normal), Blend);\n"
 		"#endif\n"
@@ -251,6 +254,7 @@ void GLAlias_CreateShaders (void)
 		"uniform bool UseFullbrightTex;\n"
 		"uniform bool UseOverbright;\n"
 		"uniform bool UseAlphaTest;\n"
+		"uniform mat4 NormalMatrix;\n"
 		
 		SHADOW_FRAG_UNIFORMS_GLSL
 
@@ -258,6 +262,7 @@ void GLAlias_CreateShaders (void)
 
 		"\n"
 		"varying float FogFragCoord;\n"
+		"varying vec3 v_Normal;\n"
 		"\n"
 		"void main()\n"
 		"{\n"
@@ -270,8 +275,9 @@ void GLAlias_CreateShaders (void)
 		"	if (UseFullbrightTex)\n"
 		"		result += texture2D(FullbrightTex, gl_TexCoord[0].xy);\n"
 		"	result = clamp(result, 0.0, 1.0);\n"
+		"	vec3 fragNormal = (NormalMatrix * vec4(v_Normal, 1.0)).xyz;\n"
 
-		SHADOW_SAMPLE_GLSL
+		SHADOW_SAMPLE_GLSL("fragNormal")
 
 		"	float fog = exp(-gl_Fog.density * gl_Fog.density * FogFragCoord * FogFragCoord);\n"
 		"	fog = clamp(fog, 0.0, 1.0) * gl_Fog.color.a;\n"
@@ -326,6 +332,7 @@ void GLAlias_CreateShaders (void)
 			glsl->randomTexLoc = GL_GetUniformLocation (&glsl->program, "RandomTex");
 			glsl->shadowMatrixLoc = GL_GetUniformLocation (&glsl->program, "ShadowMatrix");
 			glsl->modelMatrixLoc = GL_GetUniformLocation (&glsl->program, "ModelMatrix");
+			glsl->normalMatrixLoc = GL_GetUniformLocation (&glsl->program, "NormalMatrix");
 			glsl->sunBrightenLoc = GL_GetUniformLocation (&glsl->program, "SunBrighten");
 			glsl->sunDarkenLoc = GL_GetUniformLocation (&glsl->program, "SunDarken");
 		}
@@ -430,25 +437,28 @@ void GL_DrawAliasFrame_GLSL (aliasglsl_t *glsl, aliashdr_t *paliashdr, lerpdata_
 
 // gnemeth - get the shadow data
 	if (r_shadow_sun.value) {
-		GLuint shadow_texture;
-		mat4_t shadow_matrix;
-		R_Shadow_GetDepthTextureAndMatrix (&shadow_texture, shadow_matrix);
-
 		mat4_t model_matrix;
+		mat4_t normal_matrix;
+
 		Matrix4_InitTranslationAndRotation (lerpdata.origin, lerpdata.angles, model_matrix);
 		Matrix4_Translate (model_matrix, paliashdr->scale_origin, model_matrix);
 		Matrix4_Scale (model_matrix, paliashdr->scale, model_matrix);
 
+		Matrix4_InitTranslationAndRotation ((const vec3_t){0,0,0}, lerpdata.angles, normal_matrix);
+
+		r_shadow_light_t* sunlight = R_Shadow_GetSunLight ();
+
 		GL_Uniform1iFunc (glsl->useShadowLoc, 1);
 		//GL_Uniform1iFunc (glsl->randomTexLoc, RANDOM_TEXTURE_UNIT);
-		GL_Uniform1iFunc (glsl->shadowTexLoc, SHADOW_MAP_TEXTURE_UNIT);
+		GL_Uniform1iFunc (glsl->shadowTexLoc, (SHADOW_MAP_TEXTURE_UNIT - GL_TEXTURE0));
 		GL_Uniform1fFunc (glsl->sunBrightenLoc, r_shadow_sunbrighten.value);
 		GL_Uniform1fFunc (glsl->sunDarkenLoc, r_shadow_sundarken.value);
-		GL_UniformMatrix4fvFunc (glsl->shadowMatrixLoc, 1, false, shadow_matrix);
+		GL_UniformMatrix4fvFunc (glsl->shadowMatrixLoc, 1, false, sunlight->world_to_shadow_map);
 		GL_UniformMatrix4fvFunc (glsl->modelMatrixLoc, 1, false, model_matrix);
+		GL_UniformMatrix4fvFunc (glsl->normalMatrixLoc, 1, false, normal_matrix);
 
 		GL_SelectTexture (SHADOW_MAP_TEXTURE_UNIT);
-		glBindTexture (GL_TEXTURE_2D, shadow_texture);
+		glBindTexture (GL_TEXTURE_2D, sunlight->shadow_map_texture);
 
 		//GL_SelectTexture (RANDOM_TEXTURE_UNIT);
 		//glBindTexture (GL_TEXTURE_2D, GL_GetRandomTexture());

@@ -235,13 +235,36 @@ extern cvar_t r_shadow_sun;
 extern cvar_t r_shadow_sunbrighten;
 extern cvar_t r_shadow_sundarken;
 
+typedef enum r_shadow_light_type {
+	r_shadow_light_type_sun,
+	r_shadow_light_type_point,
+} r_shadow_light_type_t;
+
+typedef struct r_shadow_light_s {
+	r_shadow_light_type_t type;
+	qboolean enabled;
+
+	vec3_t light_normal;
+	vec3_t light_angles; // (pitch yaw roll)
+	GLuint shadow_map_fbo;
+	GLuint shadow_map_texture;
+	mat4_t shadow_map_projview;
+	mat4_t world_to_shadow_map;
+
+	// next in the global list of lights
+	struct r_shadow_light_s* next;
+
+	// next in the nearest list of point lights
+	struct r_shadow_light_s* next_nearest;
+} r_shadow_light_t;
+
 void R_Shadow_Init ();
 
 void R_Shadow_SetupSun (vec3_t angles);
 
 void R_Shadow_RenderShadowMap ();
 
-void R_Shadow_GetDepthTextureAndMatrix (GLuint* out_texture, mat4_t out_matrix);
+r_shadow_light_t* R_Shadow_GetSunLight ();
 
 
 void R_MarkSurfacesForSunShadowMap ();

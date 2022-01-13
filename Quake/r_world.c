@@ -594,11 +594,13 @@ static struct
 	GLuint u_ShadowTex;
 	GLuint u_SunBrighten;
 	GLuint u_SunDarken;
+	GLuint u_SunLightNormal;
 } r_water[2];
 
 #define vertAttrIndex 0
 #define texCoordsAttrIndex 1
 #define LMCoordsAttrIndex 2
+#define vertNormalIndex 3
 
 /*
 =============
@@ -614,7 +616,8 @@ static void GLWater_CreateShaders (void)
 	const glsl_attrib_binding_t bindings[] = {
 		{ "Vert", vertAttrIndex },
 		{ "TexCoords", texCoordsAttrIndex },
-		{ "LMCoords", LMCoordsAttrIndex }
+		{ "LMCoords", LMCoordsAttrIndex },
+		{ "Normal", vertNormalIndex },
 	};
 
 	// Driver bug workarounds:
@@ -633,11 +636,14 @@ static void GLWater_CreateShaders (void)
 		"varying vec2 tc_lm;\n"
 "#endif\n"
 
+		"attribute vec3 Normal;\n"
+
 		SHADOW_VERT_UNIFORMS_GLSL
 
 		"\n"
 		"varying float FogFragCoord;\n"
 		"varying vec2 tc_tex;\n"
+		"varying vec3 v_Normal;\n"
 
 		SHADOW_VARYING_GLSL
 
@@ -652,6 +658,8 @@ static void GLWater_CreateShaders (void)
 		"	FogFragCoord = gl_Position.w;\n"
 
 		SHADOW_GET_COORD_GLSL("Vert")
+
+		"   v_Normal = Normal;\n"
 
 		"}\n";
 
@@ -673,6 +681,7 @@ static void GLWater_CreateShaders (void)
 		"\n"
 		"varying float FogFragCoord;\n"
 		"varying vec2 tc_tex;\n"
+		"varying vec3 v_Normal;\n"
 
 		SHADOW_VARYING_GLSL
 
@@ -702,7 +711,7 @@ static void GLWater_CreateShaders (void)
 		"	result.a *= Alpha;\n"
 		"	result = clamp(result, 0.0, 1.0);\n"
 
-		SHADOW_SAMPLE_GLSL
+		SHADOW_SAMPLE_GLSL("v_Normal")
 
 		"	float fog = exp(-gl_Fog.density * gl_Fog.density * FogFragCoord * FogFragCoord);\n"
 		"	fog = clamp(fog, 0.0, 1.0);\n"
@@ -739,6 +748,7 @@ static void GLWater_CreateShaders (void)
 			r_water[i].u_ShadowMatrix	= GL_GetUniformLocation (&r_water[i].program, "ShadowMatrix");
 			r_water[i].u_SunBrighten	= GL_GetUniformLocation (&r_water[i].program, "SunBrighten");
 			r_water[i].u_SunDarken		= GL_GetUniformLocation (&r_water[i].program, "SunDarken");
+			r_water[i].u_SunLightNormal = GL_GetUniformLocation (&r_water[i].program, "SunLightNormal");
 
 			if (!r_water[i].program)
 				return;
@@ -775,12 +785,6 @@ void R_DrawTextureChains_Water (qmodel_t *model, entity_t *ent, texchain_t chain
 
 	if (gl_glsl_water_able)
 	{
-		GLuint shadow_texture;
-		mat4_t shadow_matrix;
-		if (r_shadow_sun.value) {
-			R_Shadow_GetDepthTextureAndMatrix (&shadow_texture, shadow_matrix);
-		}
-
 		extern GLuint gl_bmodel_vbo;
 		int lastlightmap = -2;
 		int mode = -1;
@@ -801,13 +805,15 @@ void R_DrawTextureChains_Water (qmodel_t *model, entity_t *ent, texchain_t chain
 // Bind the buffers
 			GL_BindBuffer (GL_ARRAY_BUFFER, gl_bmodel_vbo);
 			GL_BindBuffer (GL_ELEMENT_ARRAY_BUFFER, 0); // indices come from client memory!
-			GL_VertexAttribPointerFunc (vertAttrIndex,      3, GL_FLOAT, GL_FALSE, VERTEXSIZE * sizeof(float), ((float *)0));
-			GL_VertexAttribPointerFunc (texCoordsAttrIndex, 2, GL_FLOAT, GL_FALSE, VERTEXSIZE * sizeof(float), ((float *)0) + 3);
-			GL_VertexAttribPointerFunc (LMCoordsAttrIndex,  2, GL_FLOAT, GL_FALSE, VERTEXSIZE * sizeof(float), ((float *)0) + 5);
+			GL_VertexAttribPointerFunc (vertAttrIndex,      3, GL_FLOAT, GL_FALSE, VBO_VERTEXSIZE * sizeof(float), ((float *)0));
+			GL_VertexAttribPointerFunc (texCoordsAttrIndex, 2, GL_FLOAT, GL_FALSE, VBO_VERTEXSIZE * sizeof(float), ((float *)0) + 3);
+			GL_VertexAttribPointerFunc (LMCoordsAttrIndex,  2, GL_FLOAT, GL_FALSE, VBO_VERTEXSIZE * sizeof(float), ((float *)0) + 5);
+			GL_VertexAttribPointerFunc (vertNormalIndex,    3, GL_FLOAT, GL_FALSE, VBO_VERTEXSIZE * sizeof(float), ((float *)0) + 7);
 
 			//actually use the buffers...
 			GL_EnableVertexAttribArrayFunc (vertAttrIndex);
 			GL_EnableVertexAttribArrayFunc (texCoordsAttrIndex);
+			GL_EnableVertexAttribArrayFunc (vertNormalIndex);
 
 			GL_SelectTexture (GL_TEXTURE0);
 			GL_Bind (t->gltexture);
@@ -834,14 +840,18 @@ void R_DrawTextureChains_Water (qmodel_t *model, entity_t *ent, texchain_t chain
 					GL_Uniform1fFunc (r_water[mode].alpha_scale, entalpha);
 
 					if (r_shadow_sun.value) {
+						r_shadow_light_t* sunlight = R_Shadow_GetSunLight ();
+
 						GL_Uniform1iFunc (r_water[mode].u_UseShadow, 1);
-						GL_Uniform1iFunc (r_water[mode].u_ShadowTex, SHADOW_MAP_TEXTURE_UNIT);
+						GL_Uniform1iFunc (r_water[mode].u_ShadowTex, (SHADOW_MAP_TEXTURE_UNIT - GL_TEXTURE0));
 						GL_Uniform1fFunc (r_water[mode].u_SunBrighten, r_shadow_sunbrighten.value);
 						GL_Uniform1fFunc (r_water[mode].u_SunDarken, r_shadow_sundarken.value);
-						GL_UniformMatrix4fvFunc (r_water[mode].u_ShadowMatrix, 1, false, shadow_matrix);
+						GL_Uniform3fFunc (r_water[mode].u_SunLightNormal,
+							sunlight->light_normal[0], sunlight->light_normal[1], sunlight->light_normal[2]);
+						GL_UniformMatrix4fvFunc (r_water[mode].u_ShadowMatrix, 1, false, sunlight->world_to_shadow_map);
 
 						GL_SelectTexture (SHADOW_MAP_TEXTURE_UNIT);
-						glBindTexture (GL_TEXTURE_2D, shadow_texture);
+						glBindTexture (GL_TEXTURE_2D, sunlight->shadow_map_texture);
 					}
 					else {
 						GL_Uniform1iFunc (r_water[mode].u_UseShadow, 0);
@@ -977,6 +987,7 @@ static GLuint shadowMatrixLoc;
 static GLuint modelMatrixLoc;
 static GLuint sunBrightenLoc;
 static GLuint sunDarkenLoc;
+static GLuint sunLightNormalLoc;
 
 #define vertAttrIndex 0
 #define texCoordsAttrIndex 1
@@ -992,7 +1003,8 @@ void GLWorld_CreateShaders (void)
 	const glsl_attrib_binding_t bindings[] = {
 		{ "Vert", vertAttrIndex },
 		{ "TexCoords", texCoordsAttrIndex },
-		{ "LMCoords", LMCoordsAttrIndex }
+		{ "LMCoords", LMCoordsAttrIndex },
+		{ "Normal", vertNormalIndex },
 	};
 
 	// Driver bug workarounds:
@@ -1006,6 +1018,7 @@ void GLWorld_CreateShaders (void)
 		"attribute vec4 Vert;\n"
 		"attribute vec2 TexCoords;\n"
 		"attribute vec2 LMCoords;\n"
+		"attribute vec3 Normal;\n"
 		"\n"
 
 		SHADOW_VERT_UNIFORMS_GLSL
@@ -1015,6 +1028,7 @@ void GLWorld_CreateShaders (void)
 		"varying float FogFragCoord;\n"
 		"varying vec2 tc_tex;\n"
 		"varying vec2 tc_lm;\n"
+		"varying vec3 v_Normal;\n"
 
 		SHADOW_VARYING_GLSL
 
@@ -1025,6 +1039,7 @@ void GLWorld_CreateShaders (void)
 		"	tc_lm = LMCoords;\n"
 		"	gl_Position = gl_ModelViewProjectionMatrix * Vert;\n"
 		"	FogFragCoord = gl_Position.w;\n"
+		"	v_Normal = Normal;\n"
 		"   vec4 modelVert = ModelMatrix * Vert;\n"
 		
 		SHADOW_GET_COORD_GLSL("modelVert")
@@ -1048,6 +1063,7 @@ void GLWorld_CreateShaders (void)
 		"varying float FogFragCoord;\n"
 		"varying vec2 tc_tex;\n"
 		"varying vec2 tc_lm;\n"
+		"varying vec3 v_Normal;\n"
 
 		SHADOW_VARYING_GLSL
 
@@ -1065,7 +1081,7 @@ void GLWorld_CreateShaders (void)
 		"	result = clamp(result, 0.0, 1.0);\n"
 		"\n"
 
-		SHADOW_SAMPLE_GLSL
+		SHADOW_SAMPLE_GLSL("v_Normal")
 
 		"\n"
 		"	float fog = exp(-gl_Fog.density * gl_Fog.density * FogFragCoord * FogFragCoord);\n"
@@ -1080,7 +1096,7 @@ void GLWorld_CreateShaders (void)
 		return;
 
 	gl_shader_t sh = { 0 };
-	GL_CreateShaderFromVF(&sh, vertSource, fragSource, countof(bindings), bindings);
+	GL_CreateShaderFromVF (&sh, vertSource, fragSource, countof(bindings), bindings);
 	r_world_program = sh.program_id;
 	
 	if (r_world_program != 0)
@@ -1100,6 +1116,7 @@ void GLWorld_CreateShaders (void)
 		modelMatrixLoc = GL_GetUniformLocation (&r_world_program, "ModelMatrix");
 		sunBrightenLoc = GL_GetUniformLocation (&r_world_program, "SunBrighten");
 		sunDarkenLoc = GL_GetUniformLocation (&r_world_program, "SunDarken");
+		sunLightNormalLoc = GL_GetUniformLocation (&r_world_program, "SunLightNormal");
 	}
 
 	GLWater_CreateShaders();
@@ -1146,10 +1163,12 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 	GL_EnableVertexAttribArrayFunc (vertAttrIndex);
 	GL_EnableVertexAttribArrayFunc (texCoordsAttrIndex);
 	GL_EnableVertexAttribArrayFunc (LMCoordsAttrIndex);
+	GL_EnableVertexAttribArrayFunc (vertNormalIndex);
 	
-	GL_VertexAttribPointerFunc (vertAttrIndex,      3, GL_FLOAT, GL_FALSE, VERTEXSIZE * sizeof(float), ((float *)0));
-	GL_VertexAttribPointerFunc (texCoordsAttrIndex, 2, GL_FLOAT, GL_FALSE, VERTEXSIZE * sizeof(float), ((float *)0) + 3);
-	GL_VertexAttribPointerFunc (LMCoordsAttrIndex,  2, GL_FLOAT, GL_FALSE, VERTEXSIZE * sizeof(float), ((float *)0) + 5);
+	GL_VertexAttribPointerFunc (vertAttrIndex,      3, GL_FLOAT, GL_FALSE, VBO_VERTEXSIZE * sizeof(float), ((float *)0));
+	GL_VertexAttribPointerFunc (texCoordsAttrIndex, 2, GL_FLOAT, GL_FALSE, VBO_VERTEXSIZE * sizeof(float), ((float *)0) + 3);
+	GL_VertexAttribPointerFunc (LMCoordsAttrIndex,  2, GL_FLOAT, GL_FALSE, VBO_VERTEXSIZE * sizeof(float), ((float *)0) + 5);
+	GL_VertexAttribPointerFunc (vertNormalIndex,    3, GL_FLOAT, GL_FALSE, VBO_VERTEXSIZE * sizeof(float), ((float *)0) + 7);
 	
 // set uniforms
 	GL_Uniform1iFunc (texLoc, 0);
@@ -1162,10 +1181,6 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 
 // gnemeth - get the shadow data
 	if (r_shadow_sun.value) {
-		GLuint shadow_texture;
-		mat4_t shadow_matrix;
-		R_Shadow_GetDepthTextureAndMatrix (&shadow_texture, shadow_matrix);
-
 		mat4_t model_matrix;
 		if (ent) {
 			Matrix4_InitTranslationAndRotation (ent->origin, ent->angles, model_matrix);
@@ -1174,16 +1189,20 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 			Matrix4_InitIdentity (model_matrix);
 		}
 
+		r_shadow_light_t* sunlight = R_Shadow_GetSunLight ();
+
 		GL_Uniform1iFunc (useShadowLoc, 1);
 		GL_Uniform1iFunc (randomTexLoc, (RANDOM_TEXTURE_UNIT - GL_TEXTURE0));
 		GL_Uniform1iFunc (shadowTexLoc, (SHADOW_MAP_TEXTURE_UNIT - GL_TEXTURE0));
 		GL_Uniform1fFunc (sunBrightenLoc, r_shadow_sunbrighten.value);
 		GL_Uniform1fFunc (sunDarkenLoc, r_shadow_sundarken.value);
-		GL_UniformMatrix4fvFunc (shadowMatrixLoc, 1, false, shadow_matrix);
+		GL_Uniform3fFunc (sunLightNormalLoc,
+						sunlight->light_normal[0], sunlight->light_normal[1], sunlight->light_normal[2]);
+		GL_UniformMatrix4fvFunc (shadowMatrixLoc, 1, false, sunlight->world_to_shadow_map);
 		GL_UniformMatrix4fvFunc (modelMatrixLoc, 1, false, model_matrix);
 
 		GL_SelectTexture (SHADOW_MAP_TEXTURE_UNIT);
-		glBindTexture (GL_TEXTURE_2D, shadow_texture);
+		glBindTexture (GL_TEXTURE_2D, sunlight->shadow_map_texture);
 
 		GL_SelectTexture (RANDOM_TEXTURE_UNIT);
 		glBindTexture (GL_TEXTURE_2D, GL_GetRandomTexture());
