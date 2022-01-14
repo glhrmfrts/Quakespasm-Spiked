@@ -983,19 +983,14 @@ static GLuint r_world_program;
 // uniforms used in frag shader
 static GLuint texLoc;
 static GLuint LMTexLoc;
-static GLuint shadowTexLoc;
-static GLuint randomTexLoc;
 static GLuint fullbrightTexLoc;
 static GLuint useFullbrightTexLoc;
 static GLuint useOverbrightLoc;
 static GLuint useAlphaTestLoc;
-static GLuint useShadowLoc;
 static GLuint alphaLoc;
-static GLuint shadowMatrixLoc;
 static GLuint modelMatrixLoc;
-static GLuint sunBrightenLoc;
-static GLuint sunDarkenLoc;
-static GLuint sunLightNormalLoc;
+
+static GLuint shadow_data_block_index;
 
 #define vertAttrIndex 0
 #define texCoordsAttrIndex 1
@@ -1117,14 +1112,10 @@ void GLWorld_CreateShaders (void)
 		useOverbrightLoc = GL_GetUniformLocation (&r_world_program, "UseOverbright");
 		useAlphaTestLoc = GL_GetUniformLocation (&r_world_program, "UseAlphaTest");
 		alphaLoc = GL_GetUniformLocation (&r_world_program, "Alpha");
-		useShadowLoc = GL_GetUniformLocation (&r_world_program, "UseShadow");
-		shadowTexLoc = GL_GetUniformLocation (&r_world_program, "ShadowTex");
-		randomTexLoc = GL_GetUniformLocation (&r_world_program, "RandomTex");
-		shadowMatrixLoc = GL_GetUniformLocation (&r_world_program, "ShadowMatrix");
 		modelMatrixLoc = GL_GetUniformLocation (&r_world_program, "ModelMatrix");
-		sunBrightenLoc = GL_GetUniformLocation (&r_world_program, "SunBrighten");
-		sunDarkenLoc = GL_GetUniformLocation (&r_world_program, "SunDarken");
-		sunLightNormalLoc = GL_GetUniformLocation (&r_world_program, "SunLightNormal");
+
+		shadow_data_block_index = GL_GetUniformBlockIndexFunc (r_world_program, "shadow_data");
+		GL_UniformBlockBindingFunc (r_world_program, shadow_data_block_index, SHADOW_UBO_BINDING_POINT);
 	}
 
 	GLWater_CreateShaders();
@@ -1197,26 +1188,12 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 			Matrix4_InitIdentity (model_matrix);
 		}
 
-		r_shadow_light_t* sunlight = R_Shadow_GetSunLight ();
-
-		GL_Uniform1iFunc (useShadowLoc, 1);
-		GL_Uniform1iFunc (randomTexLoc, (RANDOM_TEXTURE_UNIT - GL_TEXTURE0));
-		GL_Uniform1iFunc (shadowTexLoc, (SHADOW_MAP_TEXTURE_UNIT - GL_TEXTURE0));
-		GL_Uniform1fFunc (sunBrightenLoc, r_shadow_sunbrighten.value);
-		GL_Uniform1fFunc (sunDarkenLoc, r_shadow_sundarken.value);
-		GL_Uniform3fFunc (sunLightNormalLoc,
-						sunlight->light_normal[0], sunlight->light_normal[1], sunlight->light_normal[2]);
-		GL_UniformMatrix4fvFunc (shadowMatrixLoc, 1, false, sunlight->world_to_shadow_map);
 		GL_UniformMatrix4fvFunc (modelMatrixLoc, 1, false, model_matrix);
-
-		GL_SelectTexture (SHADOW_MAP_TEXTURE_UNIT);
-		glBindTexture (GL_TEXTURE_2D, sunlight->shadow_map_texture);
 
 		GL_SelectTexture (RANDOM_TEXTURE_UNIT);
 		glBindTexture (GL_TEXTURE_2D, GL_GetRandomTexture());
-	}
-	else {
-		GL_Uniform1iFunc (useShadowLoc, 0);
+
+		R_Shadow_BindTextures ();
 	}
 	
 	for (i=0 ; i<model->numtextures ; i++)

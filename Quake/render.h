@@ -231,6 +231,8 @@ void R_BatchSurface (struct msurface_s *s);
 // shadow mapping
 //
 
+enum { SHADOW_UBO_BINDING_POINT = 0 };
+
 extern cvar_t r_shadow_sun;
 extern cvar_t r_shadow_sunbrighten;
 extern cvar_t r_shadow_sundarken;
@@ -242,12 +244,15 @@ typedef enum r_shadow_light_type {
 } r_shadow_light_type_t;
 
 typedef struct r_shadow_light_s {
+	int id;
 	r_shadow_light_type_t type;
 	qboolean enabled;
 
 	vec3_t light_position;
 	vec3_t light_normal;
 	vec3_t light_angles; // (pitch yaw roll)
+	float brighten;
+	float darken;
 	int shadow_map_width;
 	int shadow_map_height;
 	GLuint shadow_map_fbo;
@@ -270,6 +275,9 @@ void R_Shadow_RenderShadowMap ();
 
 r_shadow_light_t* R_Shadow_GetSunLight ();
 
+GLuint R_Shadow_GetUniformBuffer ();
+
+void R_Shadow_BindTextures ();
 
 void R_MarkSurfacesForLightShadowMap (r_shadow_light_t* light);
 

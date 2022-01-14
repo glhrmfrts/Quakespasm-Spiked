@@ -1,3 +1,26 @@
+/*
+Copyright (C) 1996-2001 Id Software, Inc.
+Copyright (C) 2002-2009 John Fitzgibbons and others
+Copyright (C) 2007-2008 Kristian Duske
+Copyright (C) 2010-2014 QuakeSpasm developers
+Copyright (C) 2021-2022 Guilherme Nemeth
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+
+*/
 //
 // This file contains the implementation for shadow mapping of a single directional light (the sun)
 // and point lights.
@@ -6,9 +29,11 @@
 // 		- X  Sample Shadow Map in water
 //		- X? Correctly render fence textures in shadow map
 //		- XX Use Stratified Poisson Sampling
+//		- Use UBO for sending data to shaders
 //		- Implement Spot lights shadows
 //		- Implement Point lights shadows
 //		- Fix sampling
+
 //		- Implement HDR rendering
 //		- Implement MSAA support
 //		- Implement Motion Blur
@@ -18,6 +43,7 @@
 #include "quakedef.h"
 #include "glquake.h"
 #include "gl_random_texture.h"
+#include "r_shadow_glsl.h"
 
 enum {
 	SUN_SHADOW_WIDTH = 1024*4,
@@ -62,8 +88,34 @@ typedef struct {
 	GLuint modelMatrixLoc;
 } shadow_aliasglsl_t;
 
+enum { 
+	// Max active shadow maps in a frame
+	MAX_FRAME_SHADOWS = 10
+};
+
+typedef struct {
+	mat4_t shadow_matrix;
+	vec3_t light_normal;
+	vec3_t light_position;
+	float brighten;
+	float darken;
+	int shadow_map_sampler;
+	int light_type;
+} shadow_ubo_single_t;
+
+typedef struct {
+	int use_shadow;
+	int num_shadow_maps;
+	int random_tex_sampler;
+	shadow_ubo_single_t shadows[MAX_FRAME_SHADOWS];
+} shadow_ubo_data_t;
+
 static int num_shadow_alias_glsl;
 static shadow_aliasglsl_t shadow_alias_glsl[ALIAS_GLSL_MODES];
+
+static GLuint shadow_ubo;
+static shadow_ubo_data_t shadow_ubo_data;
+static GLuint shadow_frame_textures[MAX_FRAME_SHADOWS];
 
 static vec3_t current_sun_pos;
 static vec3_t debug_sun_pos;
@@ -71,6 +123,9 @@ static qboolean debug_override_sun_pos;
 
 static r_shadow_light_t* sun_light;
 static r_shadow_light_t* first_light;
+static r_shadow_light_t* last_light_rendered;
+
+static int light_id_gen;
 
 static const char* shadow_brush_vertex_shader;
 static const char* shadow_brush_fragment_shader;
@@ -225,6 +280,13 @@ static void R_Shadow_CreateFramebuffer (r_shadow_light_t* light)
 	GL_BindFramebufferFunc (GL_FRAMEBUFFER, 0);
 }
 
+static void R_Shadow_LinkLight (r_shadow_light_t* light)
+{
+	light->id = light_id_gen++;
+	light->next = first_light;
+	first_light = sun_light;
+}
+
 //
 // Takes the world bounds and returns the bounds in the sun light/shadow-map space.
 //
@@ -285,8 +347,7 @@ void R_Shadow_SetupSun (vec3_t angle)
 		sun_light->type = r_shadow_light_type_sun;
 		sun_light->shadow_map_width = SUN_SHADOW_WIDTH;
 		sun_light->shadow_map_height = SUN_SHADOW_HEIGHT;
-		sun_light->next = first_light;
-		first_light = sun_light;
+		R_Shadow_LinkLight (sun_light);
 
 		R_Shadow_CreateFramebuffer (sun_light);
 	}
@@ -397,9 +458,6 @@ void R_Shadow_AddSpotLight (const vec3_t pos, const vec3_t angles, float fov, fl
 	l->shadow_map_width = SPOT_SHADOW_WIDTH;
 	l->shadow_map_height = SPOT_SHADOW_HEIGHT;
 
-	r_shadow_light_t* l = calloc (1, sizeof(r_shadow_light_t));
-	l->enabled = true;
-
 	VectorCopy (pos, l->light_position);
 
 	l->light_angles[0] = -angles[1];
@@ -418,9 +476,7 @@ void R_Shadow_AddSpotLight (const vec3_t pos, const vec3_t angles, float fov, fl
 
 	R_Shadow_CreateFramebuffer (l);
 
-// add to the light list
-	l->next = first_light;
-	first_light = l;
+	R_Shadow_LinkLight (l);
 }
 #endif
 
@@ -810,6 +866,7 @@ static void R_Shadow_RenderSunShadowMap (r_shadow_light_t* light)
 	R_Shadow_PrepareToRender (light);
 	R_Shadow_DrawTextureChains (light, cl.worldmodel, NULL, chain_world);
 	R_Shadow_DrawEntities (light);
+	last_light_rendered = light;
 }
 
 static void R_Shadow_RenderSpotShadowMap (r_shadow_light_t* light)
@@ -817,13 +874,87 @@ static void R_Shadow_RenderSpotShadowMap (r_shadow_light_t* light)
 	R_Shadow_PrepareToRender (light);
 	R_Shadow_DrawTextureChains (light, cl.worldmodel, NULL, chain_world);
 	R_Shadow_DrawEntities (light);
+	last_light_rendered = light;
+}
+
+static void R_Shadow_AddLightToUniformBuffer (r_shadow_light_t* light)
+{
+	if (shadow_ubo_data.num_shadow_maps >= MAX_FRAME_SHADOWS) {
+		Con_DWarning ("Shadow map limit reached, max: %d\n", MAX_FRAME_SHADOWS);
+		return;
+	}
+
+	shadow_ubo_single_t* ldata = &shadow_ubo_data.shadows[shadow_ubo_data.num_shadow_maps++];
+	ldata->light_type = (int)light->type;
+	ldata->shadow_map_sampler = SHADOW_MAP_TEXTURE_UNIT - GL_TEXTURE0 + light->id;
+	ldata->brighten = light->brighten;
+	ldata->darken = light->darken;
+	VectorCopy (light->light_position, ldata->light_position);
+	VectorCopy (light->light_normal, ldata->light_normal);
+	memcpy (ldata->shadow_matrix, light->world_to_shadow_map, sizeof(mat4_t));
+
+	shadow_frame_textures[shadow_ubo_data.num_shadow_maps - 1] = light->shadow_map_texture;
+}
+
+//
+// For now, just check if the light is inside a certain radius of the player.
+// FIXME: Implement better/proper culling.
+//
+static qboolean R_Shadow_CullLight(const r_shadow_light_t* light)
+{
+	const float CULL_RADIUS = 1024.0f;
+	vec3_t dist;
+	VectorSubtract (r_refdef.vieworg, light->light_position, dist);
+	return (VectorLength(dist) <= CULL_RADIUS);
+}
+
+static void R_Shadow_UpdateUniformBuffer ()
+{
+	if (!shadow_ubo) {
+		GL_GenBuffersFunc (1, &shadow_ubo);
+		GL_BindBufferFunc (GL_UNIFORM_BUFFER_EXT, shadow_ubo);
+		GL_BufferDataFunc (GL_UNIFORM_BUFFER_EXT, sizeof(shadow_ubo_data_t), &shadow_ubo_data, GL_DYNAMIC_DRAW);
+		GL_BindBufferBaseFunc (GL_UNIFORM_BUFFER_EXT, SHADOW_UBO_BINDING_POINT, shadow_ubo);
+	}
+	else {
+		GL_BindBufferFunc (GL_UNIFORM_BUFFER_EXT, shadow_ubo);
+	}
+
+	shadow_ubo_data.use_shadow = (int)r_shadow_sun.value;
+	shadow_ubo_data.random_tex_sampler = RANDOM_TEXTURE_UNIT - GL_TEXTURE0;
+	shadow_ubo_data.num_shadow_maps = 0;
+
+	R_Shadow_AddLightToUniformBuffer (sun_light);
+
+	for (r_shadow_light_t* light = first_light; light; light = light->next) {
+		if (light->type != r_shadow_light_type_sun) {
+			if (R_Shadow_CullLight(light)) {
+				R_Shadow_AddLightToUniformBuffer (light);
+			}
+		}
+	}
+	
+	GLvoid* p = GL_MapBufferFunc (GL_UNIFORM_BUFFER_EXT, GL_WRITE_ONLY);
+	memcpy (p, &shadow_ubo_data, sizeof(shadow_ubo_data_t));
+	GL_UnmapBufferFunc (GL_UNIFORM_BUFFER_EXT);
+}
+
+GLuint R_Shadow_GetUniformBuffer ()
+{
+	return shadow_ubo;
+}
+
+void R_Shadow_BindTextures ()
+{
+	for (int i = 0; i < shadow_ubo_data.num_shadow_maps; i++) {
+		GL_SelectTextureFunc (GL_TEXTURE0 + shadow_ubo_data.shadows[i].shadow_map_sampler);
+		glBindTexture (GL_TEXTURE_2D, shadow_frame_textures[i]);
+	}
 }
 
 void R_Shadow_RenderShadowMap ()
 {
-	r_shadow_light_t* light = NULL;
-
-	for (light = first_light; light; light = light->next) {
+	for (r_shadow_light_t* light = first_light; light; light = light->next) {
 		switch (light->type) {
 		case r_shadow_light_type_sun:
 			R_Shadow_RenderSunShadowMap (light);
@@ -834,13 +965,13 @@ void R_Shadow_RenderShadowMap ()
 		}
 	}
 
-	// light != NULL -> at least one light was rendered
-
-	if (!r_shadow_sundebug.value && light != NULL) {
-		GL_BindFramebufferFunc (GL_FRAMEBUFFER, 0);
+	if (!r_shadow_sundebug.value && last_light_rendered != NULL) {
+		R_Shadow_UpdateUniformBuffer ();
 
 		// Restore the original viewport
-		
+
+		GL_BindFramebufferFunc (GL_FRAMEBUFFER, 0);
+
 		int scale;
 
 		//johnfitz -- rewrote this section
@@ -861,6 +992,10 @@ void R_Shadow_RenderShadowMap ()
 r_shadow_light_t* R_Shadow_GetSunLight ()
 {
 	return sun_light;
+}
+
+static void R_Shadow_Cleanup ()
+{
 }
 
 static const GLchar *shadow_brush_vertex_shader = \
