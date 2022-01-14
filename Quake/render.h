@@ -231,7 +231,10 @@ void R_BatchSurface (struct msurface_s *s);
 // shadow mapping
 //
 
-enum { SHADOW_UBO_BINDING_POINT = 0 };
+enum { 
+	// Max active shadow maps in a frame
+	MAX_FRAME_SHADOWS = 10
+};
 
 extern cvar_t r_shadow_sun;
 extern cvar_t r_shadow_sunbrighten;
@@ -247,7 +250,7 @@ typedef struct r_shadow_light_s {
 	int id;
 	r_shadow_light_type_t type;
 	qboolean enabled;
-
+	qboolean rendered; // rendered this frame?
 	vec3_t light_position;
 	vec3_t light_normal;
 	vec3_t light_angles; // (pitch yaw roll)
@@ -262,9 +265,6 @@ typedef struct r_shadow_light_s {
 
 	// next in the global list of lights
 	struct r_shadow_light_s* next;
-
-	// next in the nearest list of point lights
-	struct r_shadow_light_s* next_nearest;
 } r_shadow_light_t;
 
 void R_Shadow_Init ();
@@ -277,7 +277,7 @@ r_shadow_light_t* R_Shadow_GetSunLight ();
 
 GLuint R_Shadow_GetUniformBuffer ();
 
-void R_Shadow_BindTextures ();
+void R_Shadow_BindTextures (const GLuint* sampler_locations);
 
 void R_MarkSurfacesForLightShadowMap (r_shadow_light_t* light);
 

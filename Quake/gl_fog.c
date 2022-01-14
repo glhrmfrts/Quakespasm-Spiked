@@ -45,6 +45,14 @@ float old_blue;
 float fade_time; //duration of fade
 float fade_done; //time when fade will be done
 
+typedef struct {
+	vec4_t color;
+	float density;
+} fog_ubo_data_t;
+
+static GLuint fog_ubo;
+static fog_ubo_data_t fog_ubo_data;
+
 /*
 =============
 Fog_Update
@@ -287,8 +295,12 @@ called at the beginning of each frame
 */
 void Fog_SetupFrame (void)
 {
-	glFogfv(GL_FOG_COLOR, Fog_GetColor());
-	glFogf(GL_FOG_DENSITY, Fog_GetDensity() / 64.0);
+	memcpy (fog_ubo_data.color, Fog_GetColor(), sizeof(fog_ubo_data.color));
+	fog_ubo_data.density = Fog_GetDensity() / 64.0;
+
+	GL_BindBufferFunc (GL_UNIFORM_BUFFER, fog_ubo);
+	GL_BufferDataFunc (GL_UNIFORM_BUFFER, sizeof(fog_ubo_data_t), &fog_ubo_data, GL_DYNAMIC_DRAW);
+	GL_BindBufferFunc (GL_UNIFORM_BUFFER, 0);
 }
 
 /*
@@ -326,10 +338,10 @@ called before drawing stuff that is additive blended -- sets fog color to black
 */
 void Fog_StartAdditive (void)
 {
-	vec3_t color = {0,0,0};
+	vec4_t color = {0,0,0,0};
 
 	if (Fog_GetDensity() > 0)
-		glFogfv(GL_FOG_COLOR, color);
+		memcpy (fog_ubo_data.color, color, sizeof(fog_ubo_data.color));
 }
 
 /*
@@ -342,7 +354,7 @@ called after drawing stuff that is additive blended -- restores fog color
 void Fog_StopAdditive (void)
 {
 	if (Fog_GetDensity() > 0)
-		glFogfv(GL_FOG_COLOR, Fog_GetColor());
+		memcpy (fog_ubo_data.color, Fog_GetColor(), sizeof(fog_ubo_data.color));
 }
 
 //==============================================================================
@@ -412,6 +424,13 @@ void Fog_Init (void)
 	fog_blue = DEFAULT_GRAY;
 
 	Fog_SetupState ();
+
+	GL_GenBuffersFunc (1, &fog_ubo);
+	GL_BindBufferFunc (GL_UNIFORM_BUFFER, fog_ubo);
+	GL_BufferDataFunc (GL_UNIFORM_BUFFER, sizeof(fog_ubo_data_t), &fog_ubo_data, GL_DYNAMIC_DRAW);
+	GL_BindBufferFunc (GL_UNIFORM_BUFFER, 0);
+
+	GL_BindBufferBaseFunc (GL_UNIFORM_BUFFER, FOG_UBO_BINDING_POINT, fog_ubo);
 }
 
 /*

@@ -919,8 +919,8 @@ void Matrix4_InitTranslationAndRotation (const vec3_t org, const vec3_t angles, 
 	//glRotatef (angles[2],  1, 0, 0);
 
 	Matrix4_Rotate (out, -angles[1], vec3_z, out);
-	// Matrix4_Rotate (out, -angles[0], ROTATE_Y, out);
-	// Matrix4_Rotate (out, angles[2], ROTATE_X, out);
+	Matrix4_Rotate (out, angles[0], vec3_y, out);
+	Matrix4_Rotate (out, angles[2], vec3_x, out);
 }
 
 void Matrix4_InitScale (const vec3_t scale, mat4_t out)

@@ -4,6 +4,8 @@
 
 #include "gl_random_texture.h"
 
+#define SHADOW_MAP_TEXTURE_UNIT GL_TEXTURE4
+
 #define SHADOW_POISSON_DISK_GLSL \
 "vec2 poissonDisk[16] = vec2[](\n " \
    "vec2( -0.94201624, -0.39906216 ),\n" \
@@ -24,39 +26,46 @@
    "vec2( 0.14383161, -0.14100790 )\n"\
    ");"
 
-#define SHADOW_MAP_TEXTURE_UNIT GL_TEXTURE4
-
-#define SHADOW_VERT_UNIFORMS_GLSL \
-	"uniform mat4 ShadowMatrix;\n"
+#define SHADOW_VERT_UNIFORMS_GLSL
 
 #define SHADOW_FRAG_UNIFORMS_GLSL \
-	"uniform bool UseShadow;\n" \
-	"uniform float SunBrighten;\n" \
-	"uniform float SunDarken;\n" \
-	"uniform sampler2DShadow ShadowTex;\n" \
-	"uniform sampler2D RandomTex;\n" \
-	"uniform vec3 SunLightNormal;\n"
+	"struct shadow_single_t {\n" \
+	"	mat4 shadow_matrix;\n" \
+	"	vec4 light_normal;\n" \
+	"	vec4 light_position;\n" \
+	"	float brighten;\n" \
+	"	float darken;\n" \
+	"	int light_type;\n" \
+	"};\n" \
+	"layout (std140) uniform shadow_data {\n" \
+	"	bool use_shadow;\n" \
+	"	int num_shadows;\n" \
+	"	shadow_single_t shadows[10];\n" \
+	"};\n" \
+	"uniform sampler2DShadow shadow_map_samplers[10];\n"
 
-#define SHADOW_VARYING_GLSL \
-	"varying vec3 ShadowCoord;\n" \
-	"varying vec3 WorldCoord;\n"
+#define SHADOW_VERT_OUTPUT_GLSL \
+	"out vec3 WorldCoord;\n"
+
+#define SHADOW_FRAG_INPUT_GLSL \
+	"in vec3 WorldCoord;\n"
 
 #define SHADOW_GET_COORD_GLSL(vertName) \
-	"	ShadowCoord = (ShadowMatrix * " vertName ").xyz;\n" \
 	"	WorldCoord = (" vertName ").xyz;\n"
 
 #define SHADOW_SAMPLE_GLSL(vertNormal) \
-		"	if (UseShadow) {\n" \
+		"if (use_shadow) for (int i = 0; i < num_shadows; i++) {\n" \
 			SHADOW_POISSON_DISK_GLSL \
-		"		float bias = 0.010;\n" \
-		"		float darken = SunDarken/6.0; float brighten=SunBrighten/6.0;\n" \
+		"		vec3 ShadowCoord = (shadows[i].shadow_matrix * vec4(WorldCoord, 1.0)).xyz;\n" \
+		"		float darken = shadows[i].darken/6.0; float brighten=shadows[i].brighten/6.0;\n" \
 		"		float shadowVis = 1.0;\n" \
-		"		float lightFactor = -dot(" vertNormal ", SunLightNormal);\n" \
-		"		for (int i=0;i<6;i++) {\n" \
-		"			int index = i;//int(floor(16.0*texture2D(RandomTex, (WorldCoord.xy+WorldCoord.z)*i).r));\n" \
-		"           if (shadow2D(ShadowTex, vec3(ShadowCoord.xy+poissonDisk[index]/800.0,ShadowCoord.z-(bias*lightFactor))).z < 1.0) {\n" \
+		"		float lightFactor = -dot(" vertNormal ", shadows[i].light_normal.xyz);\n" \
+		"		float bias = 0.010*lightFactor;\n" \
+		"		for (int j=0;j<6;j++) {\n" \
+		"			int index = j;     //int(floor(16.0*texture2D(random_tex, (WorldCoord.xy+WorldCoord.z)*j).r));\n" \
+		"           if (texture(shadow_map_samplers[i], vec3(ShadowCoord.xy+poissonDisk[index]/800.0,ShadowCoord.z-bias)) < 1.0) {\n" \
 		"                shadowVis -= darken;\n" \
 		"           } else { shadowVis += brighten * lightFactor;\n }\n" \
 		"       }\n" \
 		"		result = vec4(result.xyz * shadowVis, result.a);\n" \
-		"	}\n"
+		"}\n"

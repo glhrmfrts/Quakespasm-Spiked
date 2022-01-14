@@ -29,7 +29,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // 		- X  Sample Shadow Map in water
 //		- X? Correctly render fence textures in shadow map
 //		- XX Use Stratified Poisson Sampling
-//		- Use UBO for sending data to shaders
+//		- X Use UBO for sending data to shaders
 //		- Implement Spot lights shadows
 //		- Implement Point lights shadows
 //		- Fix sampling
@@ -88,25 +88,20 @@ typedef struct {
 	GLuint modelMatrixLoc;
 } shadow_aliasglsl_t;
 
-enum { 
-	// Max active shadow maps in a frame
-	MAX_FRAME_SHADOWS = 10
-};
-
 typedef struct {
 	mat4_t shadow_matrix;
-	vec3_t light_normal;
-	vec3_t light_position;
+	vec4_t light_normal;
+	vec4_t light_position;
 	float brighten;
 	float darken;
-	int shadow_map_sampler;
 	int light_type;
 } shadow_ubo_single_t;
 
 typedef struct {
 	int use_shadow;
 	int num_shadow_maps;
-	int random_tex_sampler;
+	int pad1;
+	int pad2;
 	shadow_ubo_single_t shadows[MAX_FRAME_SHADOWS];
 } shadow_ubo_data_t;
 
@@ -115,7 +110,7 @@ static shadow_aliasglsl_t shadow_alias_glsl[ALIAS_GLSL_MODES];
 
 static GLuint shadow_ubo;
 static shadow_ubo_data_t shadow_ubo_data;
-static GLuint shadow_frame_textures[MAX_FRAME_SHADOWS];
+static struct { GLuint id; GLuint unit; } shadow_frame_textures[MAX_FRAME_SHADOWS];
 
 static vec3_t current_sun_pos;
 static vec3_t debug_sun_pos;
@@ -863,10 +858,14 @@ static void R_Shadow_RenderSunShadowMap (r_shadow_light_t* light)
 {
 	if (!r_shadow_sun.value) { return; }
 
+	light->brighten = r_shadow_sunbrighten.value;
+	light->darken = r_shadow_sundarken.value;
+
 	R_Shadow_PrepareToRender (light);
 	R_Shadow_DrawTextureChains (light, cl.worldmodel, NULL, chain_world);
 	R_Shadow_DrawEntities (light);
 	last_light_rendered = light;
+	light->rendered = true;
 }
 
 static void R_Shadow_RenderSpotShadowMap (r_shadow_light_t* light)
@@ -875,6 +874,7 @@ static void R_Shadow_RenderSpotShadowMap (r_shadow_light_t* light)
 	R_Shadow_DrawTextureChains (light, cl.worldmodel, NULL, chain_world);
 	R_Shadow_DrawEntities (light);
 	last_light_rendered = light;
+	light->rendered = true;
 }
 
 static void R_Shadow_AddLightToUniformBuffer (r_shadow_light_t* light)
@@ -886,14 +886,14 @@ static void R_Shadow_AddLightToUniformBuffer (r_shadow_light_t* light)
 
 	shadow_ubo_single_t* ldata = &shadow_ubo_data.shadows[shadow_ubo_data.num_shadow_maps++];
 	ldata->light_type = (int)light->type;
-	ldata->shadow_map_sampler = SHADOW_MAP_TEXTURE_UNIT - GL_TEXTURE0 + light->id;
 	ldata->brighten = light->brighten;
 	ldata->darken = light->darken;
 	VectorCopy (light->light_position, ldata->light_position);
 	VectorCopy (light->light_normal, ldata->light_normal);
 	memcpy (ldata->shadow_matrix, light->world_to_shadow_map, sizeof(mat4_t));
 
-	shadow_frame_textures[shadow_ubo_data.num_shadow_maps - 1] = light->shadow_map_texture;
+	shadow_frame_textures[shadow_ubo_data.num_shadow_maps - 1].id = light->shadow_map_texture;
+	shadow_frame_textures[shadow_ubo_data.num_shadow_maps - 1].unit = SHADOW_MAP_TEXTURE_UNIT - GL_TEXTURE0 + light->id;
 }
 
 //
@@ -912,31 +912,24 @@ static void R_Shadow_UpdateUniformBuffer ()
 {
 	if (!shadow_ubo) {
 		GL_GenBuffersFunc (1, &shadow_ubo);
-		GL_BindBufferFunc (GL_UNIFORM_BUFFER_EXT, shadow_ubo);
-		GL_BufferDataFunc (GL_UNIFORM_BUFFER_EXT, sizeof(shadow_ubo_data_t), &shadow_ubo_data, GL_DYNAMIC_DRAW);
-		GL_BindBufferBaseFunc (GL_UNIFORM_BUFFER_EXT, SHADOW_UBO_BINDING_POINT, shadow_ubo);
-	}
-	else {
-		GL_BindBufferFunc (GL_UNIFORM_BUFFER_EXT, shadow_ubo);
+		GL_BindBufferFunc (GL_UNIFORM_BUFFER, shadow_ubo);
+		GL_BufferDataFunc (GL_UNIFORM_BUFFER, sizeof(shadow_ubo_data_t), &shadow_ubo_data, GL_DYNAMIC_DRAW);
+		GL_BindBufferFunc (GL_UNIFORM_BUFFER, 0);
+		GL_BindBufferBaseFunc (GL_UNIFORM_BUFFER, SHADOW_UBO_BINDING_POINT, shadow_ubo);
 	}
 
 	shadow_ubo_data.use_shadow = (int)r_shadow_sun.value;
-	shadow_ubo_data.random_tex_sampler = RANDOM_TEXTURE_UNIT - GL_TEXTURE0;
 	shadow_ubo_data.num_shadow_maps = 0;
 
-	R_Shadow_AddLightToUniformBuffer (sun_light);
-
 	for (r_shadow_light_t* light = first_light; light; light = light->next) {
-		if (light->type != r_shadow_light_type_sun) {
-			if (R_Shadow_CullLight(light)) {
-				R_Shadow_AddLightToUniformBuffer (light);
-			}
+		if (light->rendered) {
+			R_Shadow_AddLightToUniformBuffer (light);
 		}
 	}
-	
-	GLvoid* p = GL_MapBufferFunc (GL_UNIFORM_BUFFER_EXT, GL_WRITE_ONLY);
-	memcpy (p, &shadow_ubo_data, sizeof(shadow_ubo_data_t));
-	GL_UnmapBufferFunc (GL_UNIFORM_BUFFER_EXT);
+
+	GL_BindBufferFunc (GL_UNIFORM_BUFFER, shadow_ubo);
+	GL_BufferDataFunc (GL_UNIFORM_BUFFER, sizeof(shadow_ubo_data_t), &shadow_ubo_data, GL_DYNAMIC_DRAW);
+	GL_BindBufferFunc (GL_UNIFORM_BUFFER, 0);
 }
 
 GLuint R_Shadow_GetUniformBuffer ()
@@ -944,23 +937,27 @@ GLuint R_Shadow_GetUniformBuffer ()
 	return shadow_ubo;
 }
 
-void R_Shadow_BindTextures ()
+void R_Shadow_BindTextures (const GLuint* sampler_locations)
 {
 	for (int i = 0; i < shadow_ubo_data.num_shadow_maps; i++) {
-		GL_SelectTextureFunc (GL_TEXTURE0 + shadow_ubo_data.shadows[i].shadow_map_sampler);
-		glBindTexture (GL_TEXTURE_2D, shadow_frame_textures[i]);
+		GL_SelectTextureFunc (GL_TEXTURE0 + shadow_frame_textures[i].unit);
+		glBindTexture (GL_TEXTURE_2D, shadow_frame_textures[i].id);
+		GL_Uniform1iFunc (sampler_locations[i], shadow_frame_textures[i].unit);
 	}
 }
 
 void R_Shadow_RenderShadowMap ()
 {
 	for (r_shadow_light_t* light = first_light; light; light = light->next) {
+		light->rendered = false;
 		switch (light->type) {
 		case r_shadow_light_type_sun:
 			R_Shadow_RenderSunShadowMap (light);
 			break;
 		case r_shadow_light_type_spot:
-			R_Shadow_RenderSpotShadowMap (light);
+			if (R_Shadow_CullLight(light)) {
+				R_Shadow_RenderSpotShadowMap (light);
+			}
 			break;
 		}
 	}

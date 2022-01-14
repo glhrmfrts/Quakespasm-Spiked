@@ -24,9 +24,12 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "r_shadow_glsl.h"
+#include "gl_fog.h"
 
 extern cvar_t r_drawflat, gl_overbright_models, gl_fullbrights, r_lerpmodels, r_lerpmove; //johnfitz
 extern cvar_t scr_fov, cl_gun_fovscale;
+
+extern mat4_t r_projection_view_matrix;
 
 //up to 16 color translated skins
 gltexture_t *playertextures[MAX_SCOREBOARD]; //johnfitz -- changed to an array of pointers
@@ -78,14 +81,11 @@ typedef struct
 	GLuint useOverbrightLoc;
 	GLuint useAlphaTestLoc;
 
-	GLuint useShadowLoc;
-	GLuint shadowTexLoc;
-	GLuint randomTexLoc;
-	GLuint shadowMatrixLoc;
 	GLuint modelMatrixLoc;
 	GLuint normalMatrixLoc;
-	GLuint sunBrightenLoc;
-	GLuint sunDarkenLoc;
+	GLuint viewProjectionMatrixLoc;
+
+	GLuint shadow_data_block_index;
 } aliasglsl_t;
 static aliasglsl_t r_alias_glsl[ALIAS_GLSL_MODES];
 
@@ -167,37 +167,40 @@ void GLAlias_CreateShaders (void)
 	};
 
 	const GLchar *vertSource = \
-		"#version 110\n"
+		"#version 150\n"
 		"%s"
 		"\n"
 		"uniform vec3 ShadeVector;\n"
 		"uniform vec4 LightColor;\n"
-		"attribute vec4 TexCoords; // only xy are used \n"
-		"attribute vec4 Pose1Vert;\n"
-		"attribute vec3 Pose1Normal;\n"
+		"in vec4 TexCoords; // only xy are used \n"
+		"in vec4 Pose1Vert;\n"
+		"in vec3 Pose1Normal;\n"
 		"#ifdef SKELETAL\n"
 		"#define BoneWeight Pose2Vert\n"
 		"#define BoneIndex Pose2Normal\n"
-		"attribute vec4 BoneWeight;\n"
-		"attribute vec4 BoneIndex;\n"
-		"attribute vec4 VertColours;\n"
+		"in vec4 BoneWeight;\n"
+		"in vec4 BoneIndex;\n"
+		"in vec4 VertColours;\n"
 		"uniform vec4 BoneTable[MAXBONES*3];\n" //fixme: should probably try to use a UBO or SSBO.
 		"#else\n"
 		"uniform float Blend;\n"
-		"attribute vec4 Pose2Vert;\n"
-		"attribute vec3 Pose2Normal;\n"
+		"in vec4 Pose2Vert;\n"
+		"in vec3 Pose2Normal;\n"
 		"#endif\n"
 
 		SHADOW_VERT_UNIFORMS_GLSL
 
+		"uniform mat4 ViewProjectionMatrix;\n"
 		"uniform mat4 ModelMatrix;\n"
 
 		"\n"
-		"varying float FogFragCoord;\n"
-		"varying vec3 v_Normal;\n"
+		"out float FogFragCoord;\n"
+		"out vec3 v_Normal;\n"
+		"out vec2 v_TexCoord;\n"
+		"out vec4 v_Color;\n"
 		"\n"
 
-		SHADOW_VARYING_GLSL
+		SHADOW_VERT_OUTPUT_GLSL
 
 		"float r_avertexnormal_dot(vec3 vertexnormal) // from MH \n"
 		"{\n"
@@ -210,7 +213,7 @@ void GLAlias_CreateShaders (void)
 		"}\n"
 		"void main()\n"
 		"{\n"
-		"	gl_TexCoord[0] = TexCoords;\n"
+		"	v_TexCoord = TexCoords.xy;\n"
 		"#ifdef SKELETAL\n"
 		"	mat4 wmat;"
 		"	wmat[0]  = BoneTable[0+3*int(BoneIndex.x)] * BoneWeight.x;"
@@ -233,11 +236,11 @@ void GLAlias_CreateShaders (void)
 		"	vec4 lerpedVert = mix(vec4(Pose1Vert.xyz, 1.0), vec4(Pose2Vert.xyz, 1.0), Blend);\n"
 		"	float dot1 = mix(r_avertexnormal_dot(Pose1Normal), r_avertexnormal_dot(Pose2Normal), Blend);\n"
 		"#endif\n"
-		"	gl_Position = gl_ModelViewProjectionMatrix * lerpedVert;\n"
+		"	gl_Position = ViewProjectionMatrix * ModelMatrix * lerpedVert;\n"
 		"	FogFragCoord = gl_Position.w;\n"
-		"	gl_FrontColor = LightColor * vec4(vec3(dot1), 1.0);\n"
+		"	v_Color = LightColor * vec4(vec3(dot1), 1.0);\n"
 		"#ifdef SKELETAL\n"
-		"	gl_FrontColor *= VertColours;\n"	//this is basically only useful for vertex alphas.
+		"	v_Color *= VertColours;\n"	//this is basically only useful for vertex alphas.
 		"#endif\n"
 
 		"	vec4 modelVert = ModelMatrix * lerpedVert;\n"
@@ -247,7 +250,7 @@ void GLAlias_CreateShaders (void)
 		"}\n";
 
 	const GLchar *fragSource = \
-		"#version 120\n"
+		"#version 150\n"
 		"\n"
 		"uniform sampler2D Tex;\n"
 		"uniform sampler2D FullbrightTex;\n"
@@ -256,34 +259,40 @@ void GLAlias_CreateShaders (void)
 		"uniform bool UseAlphaTest;\n"
 		"uniform mat4 NormalMatrix;\n"
 		
+		FOG_FRAG_UNIFORMS_GLSL
+
 		SHADOW_FRAG_UNIFORMS_GLSL
 
-		SHADOW_VARYING_GLSL
+		SHADOW_FRAG_INPUT_GLSL
 
 		"\n"
-		"varying float FogFragCoord;\n"
-		"varying vec3 v_Normal;\n"
+
+		"in float FogFragCoord;\n"
+		"in vec3 v_Normal;\n"
+		"in vec2 v_TexCoord;\n"
+		"in vec4 v_Color;\n"
+
+		"out vec4 outColor;\n"
 		"\n"
 		"void main()\n"
 		"{\n"
-		"	vec4 result = texture2D(Tex, gl_TexCoord[0].xy);\n"
+		"	vec4 result = texture2D(Tex, v_TexCoord);\n"
 		"	if (UseAlphaTest && (result.a < 0.666))\n"
 		"		discard;\n"
-		"	result *= gl_Color;\n"
+		"	result *= v_Color;\n"
 		"	if (UseOverbright)\n"
 		"		result.rgb *= 2.0;\n"
 		"	if (UseFullbrightTex)\n"
-		"		result += texture2D(FullbrightTex, gl_TexCoord[0].xy);\n"
+		"		result += texture2D(FullbrightTex, v_TexCoord);\n"
 		"	result = clamp(result, 0.0, 1.0);\n"
 		"	vec3 fragNormal = (NormalMatrix * vec4(v_Normal, 1.0)).xyz;\n"
 
 		SHADOW_SAMPLE_GLSL("fragNormal")
 
-		"	float fog = exp(-gl_Fog.density * gl_Fog.density * FogFragCoord * FogFragCoord);\n"
-		"	fog = clamp(fog, 0.0, 1.0) * gl_Fog.color.a;\n"
-		"	result.rgb = mix(gl_Fog.color.rgb, result.rgb, fog);\n"
-		"	result.a *= gl_Color.a;\n" // FIXME: This will make almost transparent things cut holes though heavy fog
-		"	gl_FragColor = result;\n"
+		FOG_CALC_GLSL
+
+		"	result.a *= v_Color.a;\n" // FIXME: This will make almost transparent things cut holes though heavy fog
+		"	outColor = result;\n"
 		"}\n";
 
 	if (!gl_glsl_alias_able)
@@ -327,14 +336,12 @@ void GLAlias_CreateShaders (void)
 			glsl->useFullbrightTexLoc = GL_GetUniformLocation (&glsl->program, "UseFullbrightTex");
 			glsl->useOverbrightLoc = GL_GetUniformLocation (&glsl->program, "UseOverbright");
 			glsl->useAlphaTestLoc = GL_GetUniformLocation (&glsl->program, "UseAlphaTest");
-			glsl->useShadowLoc = GL_GetUniformLocation (&glsl->program, "UseShadow");
-			glsl->shadowTexLoc = GL_GetUniformLocation (&glsl->program, "ShadowTex");
-			glsl->randomTexLoc = GL_GetUniformLocation (&glsl->program, "RandomTex");
-			glsl->shadowMatrixLoc = GL_GetUniformLocation (&glsl->program, "ShadowMatrix");
 			glsl->modelMatrixLoc = GL_GetUniformLocation (&glsl->program, "ModelMatrix");
 			glsl->normalMatrixLoc = GL_GetUniformLocation (&glsl->program, "NormalMatrix");
-			glsl->sunBrightenLoc = GL_GetUniformLocation (&glsl->program, "SunBrighten");
-			glsl->sunDarkenLoc = GL_GetUniformLocation (&glsl->program, "SunDarken");
+			glsl->viewProjectionMatrixLoc = GL_GetUniformLocation (&glsl->program, "ViewProjectionMatrix");
+
+			glsl->shadow_data_block_index = GL_GetUniformBlockIndexFunc (glsl->program, "shadow_data");
+			GL_UniformBlockBindingFunc (glsl->program, glsl->shadow_data_block_index, SHADOW_UBO_BINDING_POINT);
 		}
 	}
 }
@@ -434,37 +441,26 @@ void GL_DrawAliasFrame_GLSL (aliasglsl_t *glsl, aliashdr_t *paliashdr, lerpdata_
 	GL_Uniform1iFunc (glsl->useFullbrightTexLoc, (fb != NULL) ? 1 : 0);
 	GL_Uniform1fFunc (glsl->useOverbrightLoc, overbright ? 1 : 0);
 	GL_Uniform1iFunc (glsl->useAlphaTestLoc, (currententity->model->flags & MF_HOLEY) ? 1 : 0);
+	GL_UniformMatrix4fvFunc (glsl->viewProjectionMatrixLoc, 1, false, (const GLfloat*)r_projection_view_matrix);
+
+	mat4_t model_matrix;
+	mat4_t normal_matrix;
+
+	Matrix4_InitTranslationAndRotation (lerpdata.origin, lerpdata.angles, model_matrix);
+	Matrix4_Translate (model_matrix, paliashdr->scale_origin, model_matrix);
+	Matrix4_Scale (model_matrix, paliashdr->scale, model_matrix);
+
+	Matrix4_InitTranslationAndRotation ((const vec3_t){0,0,0}, lerpdata.angles, normal_matrix);
+
+	GL_UniformMatrix4fvFunc (glsl->modelMatrixLoc, 1, false, model_matrix);
+	GL_UniformMatrix4fvFunc (glsl->normalMatrixLoc, 1, false, normal_matrix);
 
 // gnemeth - get the shadow data
 	if (r_shadow_sun.value) {
-		mat4_t model_matrix;
-		mat4_t normal_matrix;
-
-		Matrix4_InitTranslationAndRotation (lerpdata.origin, lerpdata.angles, model_matrix);
-		Matrix4_Translate (model_matrix, paliashdr->scale_origin, model_matrix);
-		Matrix4_Scale (model_matrix, paliashdr->scale, model_matrix);
-
-		Matrix4_InitTranslationAndRotation ((const vec3_t){0,0,0}, lerpdata.angles, normal_matrix);
-
-		r_shadow_light_t* sunlight = R_Shadow_GetSunLight ();
-
-		GL_Uniform1iFunc (glsl->useShadowLoc, 1);
-		//GL_Uniform1iFunc (glsl->randomTexLoc, RANDOM_TEXTURE_UNIT);
-		GL_Uniform1iFunc (glsl->shadowTexLoc, (SHADOW_MAP_TEXTURE_UNIT - GL_TEXTURE0));
-		GL_Uniform1fFunc (glsl->sunBrightenLoc, r_shadow_sunbrighten.value);
-		GL_Uniform1fFunc (glsl->sunDarkenLoc, r_shadow_sundarken.value);
-		GL_UniformMatrix4fvFunc (glsl->shadowMatrixLoc, 1, false, sunlight->world_to_shadow_map);
-		GL_UniformMatrix4fvFunc (glsl->modelMatrixLoc, 1, false, model_matrix);
-		GL_UniformMatrix4fvFunc (glsl->normalMatrixLoc, 1, false, normal_matrix);
-
-		GL_SelectTexture (SHADOW_MAP_TEXTURE_UNIT);
-		glBindTexture (GL_TEXTURE_2D, sunlight->shadow_map_texture);
-
 		//GL_SelectTexture (RANDOM_TEXTURE_UNIT);
 		//glBindTexture (GL_TEXTURE_2D, GL_GetRandomTexture());
-	}
-	else {
-		GL_Uniform1iFunc (glsl->useShadowLoc, 0);
+
+		// R_Shadow_BindTextures ();
 	}
 	
 // set textures
@@ -578,7 +574,7 @@ void GL_DrawAliasFrame (aliashdr_t *paliashdr, lerpdata_t lerpdata)
 					glColorPointer(4, GL_FLOAT, 0, vc);
 				}
 
-				//glVertexPointer may not take GL_UNSIGNED_BYTE, which means we can't use our vbos. attribute 0 MAY be vertex coords, but I don't want to depend on that.
+				//glVertexPointer may not take GL_UNSIGNED_BYTE, which means we can't use our vbos. in 0 MAY be vertex coords, but I don't want to depend on that.
 				for (i = 0; i < paliashdr->numverts_vbo; i++)
 				{
 					vpos[i][0] = verts2[i].v[0];

@@ -302,6 +302,28 @@ extern STQ_PFNGLFRAMEBUFFERTEXTUREPROC GL_FramebufferTextureFunc;
 typedef void (APIENTRYP STQ_PFNGLUNIFORMMATRIX4FVPROC) (GLuint loc, GLuint count, GLboolean row_major, const GLfloat* data);
 extern STQ_PFNGLUNIFORMMATRIX4FVPROC GL_UniformMatrix4fvFunc;
 
+// gnemeth -- uniforn buffer object
+
+typedef void (APIENTRYP STQ_PFNGLBINDBUFFERBASEPROC) (GLenum target, GLuint index, GLuint buffer);
+extern STQ_PFNGLBINDBUFFERBASEPROC GL_BindBufferBaseFunc;
+
+typedef void (APIENTRYP STQ_PFNGLUNIFORMBLOCKBINDINGPROC) (GLuint program, GLuint block_index, GLuint binding_point);
+extern STQ_PFNGLUNIFORMBLOCKBINDINGPROC GL_UniformBlockBindingFunc;
+
+typedef GLuint (APIENTRYP STQ_PFNGLGETUNIFORMBLOCKINDEXPROC) (GLuint program, const GLchar* name);
+extern STQ_PFNGLGETUNIFORMBLOCKINDEXPROC GL_GetUniformBlockIndexFunc;
+
+typedef GLvoid* (APIENTRYP STQ_PFNGLMAPBUFFERPROC) (GLenum target, GLenum access);
+extern STQ_PFNGLMAPBUFFERPROC GL_MapBufferFunc;
+
+typedef void (APIENTRYP STQ_PFNGLUNMAPBUFFERPROC) (GLenum target);
+extern STQ_PFNGLUNMAPBUFFERPROC GL_UnmapBufferFunc;
+
+enum {
+	FOG_UBO_BINDING_POINT = 0,
+	SHADOW_UBO_BINDING_POINT = 1,
+};
+
 // gnemeth -- geometry and vertex attributes
 
 typedef enum gl_vertex_attribute_type {

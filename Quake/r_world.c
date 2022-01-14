@@ -25,8 +25,16 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "r_shadow_glsl.h"
 #include "gl_random_texture.h"
+#include "gl_fog.h"
 
 extern cvar_t gl_fullbrights, r_drawflat, gl_overbright, r_oldskyleaf, r_showtris; //johnfitz
+
+extern GLuint gl_bmodel_vbo;
+
+extern cvar_t r_shadow_sunbrighten;
+extern cvar_t r_shadow_sundarken;
+
+extern mat4_t r_projection_view_matrix;
 
 byte *SV_FatPVS (vec3_t org, qmodel_t *worldmodel);
 
@@ -596,13 +604,9 @@ static struct
 	GLuint light_scale;
 	GLuint alpha_scale;
 	GLuint time;
+	GLuint view_projection_matrix;
 
-	GLuint u_UseShadow;
-	GLuint u_ShadowMatrix;
-	GLuint u_ShadowTex;
-	GLuint u_SunBrighten;
-	GLuint u_SunDarken;
-	GLuint u_SunLightNormal;
+	GLuint shadow_data_block_index;
 } r_water[2];
 
 #define vertAttrIndex 0
@@ -634,26 +638,29 @@ static void GLWater_CreateShaders (void)
 	//    `gl_ModelViewProjectionMatrix * vec4(Vert, 1.0);`. Work around with
 	//    making Vert a vec4. (https://sourceforge.net/p/quakespasm/bugs/39/)
 	const GLchar *vertSource = \
-		"#version 120\n"
+		"#version 150\n"
 		"%s"
 		"\n"
-		"attribute vec4 Vert;\n"
-		"attribute vec2 TexCoords;\n"
+		"in vec4 Vert;\n"
+		"in vec2 TexCoords;\n"
 "#ifdef LIT\n"
-		"attribute vec2 LMCoords;\n"
+		"in vec2 LMCoords;\n"
 		"varying vec2 tc_lm;\n"
 "#endif\n"
 
-		"attribute vec3 Normal;\n"
+		"in vec3 Normal;\n"
+
+		"uniform mat4 ViewProjectionMatrix;\n"
 
 		SHADOW_VERT_UNIFORMS_GLSL
 
 		"\n"
-		"varying float FogFragCoord;\n"
-		"varying vec2 tc_tex;\n"
-		"varying vec3 v_Normal;\n"
 
-		SHADOW_VARYING_GLSL
+		"out float FogFragCoord;\n"
+		"out vec2 tc_tex;\n"
+		"out vec3 v_Normal;\n"
+
+		SHADOW_VERT_OUTPUT_GLSL
 
 		"\n"
 		"void main()\n"
@@ -662,7 +669,7 @@ static void GLWater_CreateShaders (void)
 "#ifdef LIT\n"
 		"	tc_lm = LMCoords;\n"
 "#endif\n"
-		"	gl_Position = gl_ModelViewProjectionMatrix * Vert;\n"
+		"	gl_Position = ViewProjectionMatrix * Vert;\n"
 		"	FogFragCoord = gl_Position.w;\n"
 
 		SHADOW_GET_COORD_GLSL("Vert")
@@ -672,26 +679,30 @@ static void GLWater_CreateShaders (void)
 		"}\n";
 
 	const GLchar *fragSource = \
-		"#version 120\n"
+		"#version 150\n"
 		"%s"
 		"\n"
 		"uniform sampler2D Tex;\n"
 "#ifdef LIT\n"
 		"uniform sampler2D LMTex;\n"
 		"uniform float LightScale;\n"
-		"varying vec2 tc_lm;\n"
+		"in vec2 tc_lm;\n"
 "#endif\n"
 		"uniform float Alpha;\n"
 		"uniform float WarpTime;\n"
 
 		SHADOW_FRAG_UNIFORMS_GLSL
 
-		"\n"
-		"varying float FogFragCoord;\n"
-		"varying vec2 tc_tex;\n"
-		"varying vec3 v_Normal;\n"
+		FOG_FRAG_UNIFORMS_GLSL
 
-		SHADOW_VARYING_GLSL
+		"\n"
+		"in float FogFragCoord;\n"
+		"in vec2 tc_tex;\n"
+		"in vec3 v_Normal;\n"
+
+		SHADOW_FRAG_INPUT_GLSL
+
+		"out vec4 outColor;\n"
 
 		"\n"
 		"void main()\n"
@@ -721,10 +732,9 @@ static void GLWater_CreateShaders (void)
 
 		SHADOW_SAMPLE_GLSL("v_Normal")
 
-		"	float fog = exp(-gl_Fog.density * gl_Fog.density * FogFragCoord * FogFragCoord);\n"
-		"	fog = clamp(fog, 0.0, 1.0);\n"
-		"	result.rgb = mix(gl_Fog.color.rgb, result.rgb, fog);\n"
-		"	gl_FragColor = result;\n"
+		FOG_CALC_GLSL
+
+		"	outColor = result;\n"
 		"}\n";
 
 	size_t i;
@@ -746,17 +756,15 @@ static void GLWater_CreateShaders (void)
 			r_water[i].program = sh.program_id;
 
 			// get uniform locations
-			GLuint texLoc				= GL_GetUniformLocation (&r_water[i].program, "Tex");
-			GLuint LMTexLoc				= (i?GL_GetUniformLocation (&r_water[i].program, "LMTex"):-1);
-			r_water[i].light_scale		= (i?GL_GetUniformLocation (&r_water[i].program, "LightScale"):-1);
-			r_water[i].alpha_scale		= GL_GetUniformLocation (&r_water[i].program, "Alpha");
-			r_water[i].time				= GL_GetUniformLocation (&r_water[i].program, "WarpTime");
-			r_water[i].u_UseShadow		= GL_GetUniformLocation (&r_water[i].program, "UseShadow");
-			r_water[i].u_ShadowTex		= GL_GetUniformLocation (&r_water[i].program, "ShadowTex");
-			r_water[i].u_ShadowMatrix	= GL_GetUniformLocation (&r_water[i].program, "ShadowMatrix");
-			r_water[i].u_SunBrighten	= GL_GetUniformLocation (&r_water[i].program, "SunBrighten");
-			r_water[i].u_SunDarken		= GL_GetUniformLocation (&r_water[i].program, "SunDarken");
-			r_water[i].u_SunLightNormal = GL_GetUniformLocation (&r_water[i].program, "SunLightNormal");
+			GLuint texLoc					  = GL_GetUniformLocation (&r_water[i].program, "Tex");
+			GLuint LMTexLoc					  = (i?GL_GetUniformLocation (&r_water[i].program, "LMTex"):-1);
+			r_water[i].light_scale			  = (i?GL_GetUniformLocation (&r_water[i].program, "LightScale"):-1);
+			r_water[i].alpha_scale			  = GL_GetUniformLocation (&r_water[i].program, "Alpha");
+			r_water[i].time					  = GL_GetUniformLocation (&r_water[i].program, "WarpTime");
+			r_water[i].view_projection_matrix = GL_GetUniformLocation (&r_water[i].program, "ViewProjectionMatrix");
+
+			r_water[i].shadow_data_block_index = GL_GetUniformBlockIndexFunc (r_water[i].program, "shadow_data");
+			GL_UniformBlockBindingFunc (r_water[i].program, r_water[i].shadow_data_block_index, SHADOW_UBO_BINDING_POINT);
 
 			if (!r_water[i].program)
 				return;
@@ -846,23 +854,11 @@ void R_DrawTextureChains_Water (qmodel_t *model, entity_t *ent, texchain_t chain
 					if (r_water[mode].light_scale != -1)
 						GL_Uniform1fFunc (r_water[mode].light_scale, gl_overbright.value?2:1);
 					GL_Uniform1fFunc (r_water[mode].alpha_scale, entalpha);
+					GL_UniformMatrix4fvFunc (r_water[mode].view_projection_matrix,
+						1, false, (const GLfloat*)r_projection_view_matrix);
 
 					if (r_shadow_sun.value) {
-						r_shadow_light_t* sunlight = R_Shadow_GetSunLight ();
-
-						GL_Uniform1iFunc (r_water[mode].u_UseShadow, 1);
-						GL_Uniform1iFunc (r_water[mode].u_ShadowTex, (SHADOW_MAP_TEXTURE_UNIT - GL_TEXTURE0));
-						GL_Uniform1fFunc (r_water[mode].u_SunBrighten, r_shadow_sunbrighten.value);
-						GL_Uniform1fFunc (r_water[mode].u_SunDarken, r_shadow_sundarken.value);
-						GL_Uniform3fFunc (r_water[mode].u_SunLightNormal,
-							sunlight->light_normal[0], sunlight->light_normal[1], sunlight->light_normal[2]);
-						GL_UniformMatrix4fvFunc (r_water[mode].u_ShadowMatrix, 1, false, sunlight->world_to_shadow_map);
-
-						GL_SelectTexture (SHADOW_MAP_TEXTURE_UNIT);
-						glBindTexture (GL_TEXTURE_2D, sunlight->shadow_map_texture);
-					}
-					else {
-						GL_Uniform1iFunc (r_water[mode].u_UseShadow, 0);
+						// R_Shadow_BindTextures ();
 					}
 
 					lastlightmap = s->lightmaptexturenum;
@@ -989,8 +985,12 @@ static GLuint useOverbrightLoc;
 static GLuint useAlphaTestLoc;
 static GLuint alphaLoc;
 static GLuint modelMatrixLoc;
+static GLuint viewProjectionMatrixLoc;
+
+static GLuint fog_data_block_index;
 
 static GLuint shadow_data_block_index;
+static GLuint shadow_map_samplers_loc[MAX_FRAME_SHADOWS];
 
 #define vertAttrIndex 0
 #define texCoordsAttrIndex 1
@@ -1016,31 +1016,32 @@ void GLWorld_CreateShaders (void)
 	//    `gl_ModelViewProjectionMatrix * vec4(Vert, 1.0);`. Work around with
 	//    making Vert a vec4. (https://sourceforge.net/p/quakespasm/bugs/39/)
 	const GLchar *vertSource = \
-		"#version 120\n"
+		"#version 150\n"
 		"\n"
-		"attribute vec4 Vert;\n"
-		"attribute vec2 TexCoords;\n"
-		"attribute vec2 LMCoords;\n"
-		"attribute vec3 Normal;\n"
+		"in vec4 Vert;\n"
+		"in vec2 TexCoords;\n"
+		"in vec2 LMCoords;\n"
+		"in vec3 Normal;\n"
 		"\n"
 
 		SHADOW_VERT_UNIFORMS_GLSL
 
+		"uniform mat4 ViewProjectionMatrix;\n"
 		"uniform mat4 ModelMatrix;\n"
 
-		"varying float FogFragCoord;\n"
-		"varying vec2 tc_tex;\n"
-		"varying vec2 tc_lm;\n"
-		"varying vec3 v_Normal;\n"
+		"out float FogFragCoord;\n"
+		"out vec2 tc_tex;\n"
+		"out vec2 tc_lm;\n"
+		"out vec3 v_Normal;\n"
 
-		SHADOW_VARYING_GLSL
+		SHADOW_VERT_OUTPUT_GLSL
 
 		"\n"
 		"void main()\n"
 		"{\n"
 		"	tc_tex = TexCoords;\n"
 		"	tc_lm = LMCoords;\n"
-		"	gl_Position = gl_ModelViewProjectionMatrix * Vert;\n"
+		"	gl_Position = ViewProjectionMatrix * ModelMatrix * Vert;\n"
 		"	FogFragCoord = gl_Position.w;\n"
 		"	v_Normal = Normal;\n"
 		"   vec4 modelVert = ModelMatrix * Vert;\n"
@@ -1050,7 +1051,7 @@ void GLWorld_CreateShaders (void)
 		"}\n";
 	
 	const GLchar *fragSource = \
-		"#version 120\n"
+		"#version 150\n"
 		"\n"
 		"uniform sampler2D Tex;\n"
 		"uniform sampler2D LMTex;\n"
@@ -1062,13 +1063,17 @@ void GLWorld_CreateShaders (void)
 
 		SHADOW_FRAG_UNIFORMS_GLSL
 
-		"\n"
-		"varying float FogFragCoord;\n"
-		"varying vec2 tc_tex;\n"
-		"varying vec2 tc_lm;\n"
-		"varying vec3 v_Normal;\n"
+		FOG_FRAG_UNIFORMS_GLSL
 
-		SHADOW_VARYING_GLSL
+		"\n"
+		"in float FogFragCoord;\n"
+		"in vec2 tc_tex;\n"
+		"in vec2 tc_lm;\n"
+		"in vec3 v_Normal;\n"
+
+		SHADOW_FRAG_INPUT_GLSL
+
+		"out vec4 outColor;\n"
 
 		"\n"
 		"void main()\n"
@@ -1087,12 +1092,12 @@ void GLWorld_CreateShaders (void)
 		SHADOW_SAMPLE_GLSL("v_Normal")
 
 		"\n"
-		"	float fog = exp(-gl_Fog.density * gl_Fog.density * FogFragCoord * FogFragCoord);\n"
-		"	fog = clamp(fog, 0.0, 1.0);\n"
-		"	result = mix(gl_Fog.color, result, fog);\n"
+
+		FOG_CALC_GLSL
+		
 		"	result.a = Alpha;\n" // FIXME: This will make almost transparent things cut holes though heavy fog
 		"\n"
-		"	gl_FragColor = result;\n"
+		"	outColor = result;\n"
 		"}\n";
 	
 	if (!gl_glsl_alias_able)
@@ -1113,6 +1118,16 @@ void GLWorld_CreateShaders (void)
 		useAlphaTestLoc = GL_GetUniformLocation (&r_world_program, "UseAlphaTest");
 		alphaLoc = GL_GetUniformLocation (&r_world_program, "Alpha");
 		modelMatrixLoc = GL_GetUniformLocation (&r_world_program, "ModelMatrix");
+		viewProjectionMatrixLoc = GL_GetUniformLocation (&r_world_program, "ViewProjectionMatrix");
+
+		for (int si = 0; si < MAX_FRAME_SHADOWS; si++) {
+			static char uniform_name[] = "shadow_map_samplers[#]";
+			uniform_name[strlen(uniform_name) - 2] = '0' + si;
+			shadow_map_samplers_loc[si] = GL_GetUniformLocation (&r_world_program, uniform_name);
+		}
+
+		fog_data_block_index = GL_GetUniformBlockIndexFunc (r_world_program, "fog_data");
+		GL_UniformBlockBindingFunc (r_world_program, fog_data_block_index, FOG_UBO_BINDING_POINT);
 
 		shadow_data_block_index = GL_GetUniformBlockIndexFunc (r_world_program, "shadow_data");
 		GL_UniformBlockBindingFunc (r_world_program, shadow_data_block_index, SHADOW_UBO_BINDING_POINT);
@@ -1120,11 +1135,6 @@ void GLWorld_CreateShaders (void)
 
 	GLWater_CreateShaders();
 }
-
-extern GLuint gl_bmodel_vbo;
-
-extern cvar_t r_shadow_sunbrighten;
-extern cvar_t r_shadow_sundarken;
 
 /*
 ================
@@ -1177,23 +1187,23 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 	GL_Uniform1iFunc (useOverbrightLoc, (int)gl_overbright.value);
 	GL_Uniform1iFunc (useAlphaTestLoc, 0);
 	GL_Uniform1fFunc (alphaLoc, entalpha);
+	GL_UniformMatrix4fvFunc (viewProjectionMatrixLoc, 1, false, (const GLfloat*)r_projection_view_matrix);
+
+	mat4_t model_matrix;
+	if (ent) {
+		Matrix4_InitTranslationAndRotation(ent->origin, ent->angles, model_matrix);
+	}
+	else {
+		Matrix4_InitIdentity(model_matrix);
+	}
+	GL_UniformMatrix4fvFunc(modelMatrixLoc, 1, false, model_matrix);
 
 // gnemeth - get the shadow data
 	if (r_shadow_sun.value) {
-		mat4_t model_matrix;
-		if (ent) {
-			Matrix4_InitTranslationAndRotation (ent->origin, ent->angles, model_matrix);
-		}
-		else {
-			Matrix4_InitIdentity (model_matrix);
-		}
-
-		GL_UniformMatrix4fvFunc (modelMatrixLoc, 1, false, model_matrix);
-
 		GL_SelectTexture (RANDOM_TEXTURE_UNIT);
 		glBindTexture (GL_TEXTURE_2D, GL_GetRandomTexture());
 
-		R_Shadow_BindTextures ();
+		R_Shadow_BindTextures (shadow_map_samplers_loc);
 	}
 	
 	for (i=0 ; i<model->numtextures ; i++)

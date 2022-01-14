@@ -450,6 +450,8 @@ float frustum_skew = 0.0; //used by r_stereo
 	glFrustum(-xmax + frustum_skew, xmax + frustum_skew, -ymax, ymax, NEARCLIP, gl_farclip.value);
 }*/
 
+mat4_t r_projection_view_matrix;
+
 /*
 =============
 R_SetupGL
@@ -472,14 +474,18 @@ void R_SetupGL (void)
 
 	#if 1	//Spike: these should be equivelent. gpus tend not to use doubles in favour of speed, so no loss there.
 	{
-		mat4_t mat;
-		Matrix4_ProjectionMatrix(r_fovx, r_fovy, NEARCLIP, gl_farclip.value, false, frustum_skew, 0, mat);
-		glMatrixMode(GL_PROJECTION);
-		glLoadMatrixf(mat);
+		mat4_t proj;
+		mat4_t view;
 
-		Matrix4_ViewMatrix(r_refdef.viewangles, r_refdef.vieworg, mat);
+		Matrix4_ProjectionMatrix(r_fovx, r_fovy, NEARCLIP, gl_farclip.value, false, frustum_skew, 0, proj);
+		glMatrixMode(GL_PROJECTION);
+		glLoadMatrixf(proj);
+
+		Matrix4_ViewMatrix(r_refdef.viewangles, r_refdef.vieworg, view);
 		glMatrixMode(GL_MODELVIEW);
-		glLoadMatrixf(mat);
+		glLoadMatrixf(view);
+
+		Matrix4_Multiply (proj, view, r_projection_view_matrix);
     }
 	#else
 	glMatrixMode(GL_PROJECTION);

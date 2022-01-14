@@ -160,6 +160,12 @@ STQ_PFNGLCHECKFRAMEBUFFERSTATUSPROC GL_CheckFramebufferStatusFunc = NULL; // gne
 
 STQ_PFNGLUNIFORMMATRIX4FVPROC GL_UniformMatrix4fvFunc = NULL; // gnemeth
 
+STQ_PFNGLBINDBUFFERBASEPROC GL_BindBufferBaseFunc = NULL; // gnemeth
+STQ_PFNGLUNIFORMBLOCKBINDINGPROC GL_UniformBlockBindingFunc = NULL; // gnemeth
+STQ_PFNGLGETUNIFORMBLOCKINDEXPROC GL_GetUniformBlockIndexFunc = NULL; // gnemeth
+STQ_PFNGLMAPBUFFERPROC GL_MapBufferFunc = NULL; // gnemeth
+STQ_PFNGLUNMAPBUFFERPROC GL_UnmapBufferFunc = NULL; // gnemeth
+
 //====================================
 
 //johnfitz -- new cvars
@@ -625,6 +631,9 @@ static qboolean VID_SetMode (int width, int height, int refreshrate, int bpp, qb
 	SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, fsaa);
 
 	q_snprintf(caption, sizeof(caption), ENGINE_NAME_AND_VER);
+
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
 
 #if defined(USE_SDL2)
 	/* Create the window if needed, hidden */
@@ -1294,18 +1303,37 @@ static void GL_CheckExtensions (void)
 		GL_FramebufferTextureFunc = (STQ_PFNGLFRAMEBUFFERTEXTUREPROC) SDL_GL_GetProcAddress("glFramebufferTexture");
 		if (GL_GenFramebuffersFunc && GL_BindFramebufferFunc && GL_CheckFramebufferStatusFunc && GL_FramebufferTextureFunc)
 		{
-			Con_Printf ("FOUND: EXT_framebuffer_object\n");
+			Con_Printf ("FOUND: ARB_framebuffer_object\n");
 		}
-		else {
-			Sys_Error ("StrawberryQuake requires OpenGL framebuffers\n");
+		else
+		{
+			Sys_Error ("XFiend requires OpenGL framebuffers\n");
 			exit (EXIT_FAILURE);
 		}
 
 		GL_UniformMatrix4fvFunc = (STQ_PFNGLUNIFORMMATRIX4FVPROC) SDL_GL_GetProcAddress("glUniformMatrix4fv");
+
+		//
+		// gnemeth - uniform buffer and block support
+		//
+		GL_BindBufferBaseFunc = (STQ_PFNGLBINDBUFFERBASEPROC) SDL_GL_GetProcAddress("glBindBufferBase");
+		GL_UniformBlockBindingFunc = (STQ_PFNGLUNIFORMBLOCKBINDINGPROC) SDL_GL_GetProcAddress("glUniformBlockBinding");
+		GL_GetUniformBlockIndexFunc = (STQ_PFNGLGETUNIFORMBLOCKINDEXPROC) SDL_GL_GetProcAddress("glGetUniformBlockIndex");
+		GL_MapBufferFunc = (STQ_PFNGLMAPBUFFERPROC) SDL_GL_GetProcAddress("glMapBuffer");
+		GL_UnmapBufferFunc = (STQ_PFNGLUNMAPBUFFERPROC) SDL_GL_GetProcAddress("glUnmapBuffer");
+		if (GL_BindBufferBaseFunc && GL_UniformBlockBindingFunc && GL_GetUniformBlockIndexFunc && GL_MapBufferFunc && GL_UnmapBufferFunc)
+		{
+			Con_Printf ("FOUND: ARB_uniform_buffer_object\n");
+		}
+		else
+		{
+			Sys_Error ("XFiend requires Uniform Buffer Object\n");
+			exit (EXIT_FAILURE);
+		}
 	}
 	else
 	{
-		Sys_Error ("StrawberryQuake requires at least OpenGL 3.0");
+		Sys_Error ("XFiend requires at least OpenGL 3.0");
 		exit (EXIT_FAILURE);
 	}
 }
