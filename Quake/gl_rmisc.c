@@ -415,8 +415,7 @@ void R_NewMap (void)
 	Fog_NewMap (); //johnfitz -- global fog in worldspawn
 	R_ParseWorldspawn (); //ericw -- wateralpha, lavaalpha, telealpha, slimealpha in worldspawn
 
-	vec3_t angles = {0,-90,0};
-	R_Shadow_SetupSun (angles);
+	R_Shadow_NewMap ();
 
 	load_subdivide_size = gl_subdivide_size.value; //johnfitz -- is this the right place to set this?
 }

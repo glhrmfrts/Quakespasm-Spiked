@@ -53,6 +53,10 @@ enum {
 	SPOT_SHADOW_HEIGHT = 1024,
 };
 
+#define SUN_SHADOW_BIAS (0.01f)
+
+#define SPOT_SHADOW_BIAS (0.000001f)
+
 cvar_t r_shadow_sun = {"r_shadow_sun", "1", CVAR_ARCHIVE, 1.0f};
 cvar_t r_shadow_sundebug = {"r_shadow_sundebug", "0", CVAR_NONE, 0.0f};
 cvar_t r_shadow_sunbrighten = {"r_shadow_sunbrighten", "0.2", CVAR_NONE, 0.2f};
@@ -94,6 +98,8 @@ typedef struct {
 	vec4_t light_position;
 	float brighten;
 	float darken;
+	float radius;
+	float bias;
 	int light_type;
 } shadow_ubo_single_t;
 
@@ -130,8 +136,13 @@ static const char *shadow_alias_fragment_shader;
 static void R_Shadow_SetAngle_f ()
 {
 	if (Cmd_Argc() < 4) {
+		if (!sun_light) {
+			Con_Printf("No active sunlight\n");
+			return;
+		}
+
 		Con_Printf ("Current sun shadow angle: %5.1f %5.1f %5.1f\n",
-			sun_light->light_angles[1], sun_light->light_angles[0], sun_light->light_angles[2]);
+			sun_light->light_angles[1], -sun_light->light_angles[0], sun_light->light_angles[2]);
 		Con_Printf ("Usage: r_shadow_sunangle <yaw> <pitch> <roll>\n");
 		return;
 	}
@@ -141,16 +152,6 @@ static void R_Shadow_SetAngle_f ()
 	float roll = Q_atof (Cmd_Argv(3));
 
 	R_Shadow_SetupSun ((const vec3_t){ yaw, pitch, roll });
-}
-
-void R_Shadow_Init ()
-{
-	Cvar_RegisterVariable (&r_shadow_sun);
-	Cvar_RegisterVariable (&r_shadow_sundebug);
-	Cvar_RegisterVariable (&r_shadow_sunbrighten);
-	Cvar_RegisterVariable (&r_shadow_sundarken);
-	Cvar_RegisterVariable (&r_shadow_sunworldcast);
-	Cmd_AddCommand ("r_shadow_sunangle", R_Shadow_SetAngle_f);
 }
 
 static void R_Shadow_CreateBrushShaders ()
@@ -265,6 +266,7 @@ static void R_Shadow_CreateFramebuffer (r_shadow_light_t* light)
 	GL_FramebufferTextureFunc (GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, light->shadow_map_texture, 0);
 
 	glDrawBuffer (GL_NONE); // No color buffer is drawn to.
+	glReadBuffer (GL_NONE);
 
 	if (GL_CheckFramebufferStatusFunc(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
 		Con_Warning ("Failed to create Sun Shadow Framebuffer\n");
@@ -275,11 +277,28 @@ static void R_Shadow_CreateFramebuffer (r_shadow_light_t* light)
 	GL_BindFramebufferFunc (GL_FRAMEBUFFER, 0);
 }
 
+void R_Shadow_Init ()
+{
+	Cvar_RegisterVariable(&r_shadow_sun);
+	Cvar_RegisterVariable(&r_shadow_sundebug);
+	Cvar_RegisterVariable(&r_shadow_sunbrighten);
+	Cvar_RegisterVariable(&r_shadow_sundarken);
+	Cvar_RegisterVariable(&r_shadow_sunworldcast);
+	Cmd_AddCommand("r_shadow_sunangle", R_Shadow_SetAngle_f);
+
+	if (!shadow_brush_glsl.shader.program_id) {
+		R_Shadow_CreateBrushShaders();
+	}
+	if (num_shadow_alias_glsl < ALIAS_GLSL_MODES) {
+		R_Shadow_CreateAliasShaders();
+	}
+}
+
 static void R_Shadow_LinkLight (r_shadow_light_t* light)
 {
 	light->id = light_id_gen++;
 	light->next = first_light;
-	first_light = sun_light;
+	first_light = light;
 }
 
 //
@@ -329,19 +348,13 @@ void R_Shadow_SetupSun (vec3_t angle)
 {
 	if (!r_shadow_sun.value) { return; }
 
-	if (!shadow_brush_glsl.shader.program_id) {
-		R_Shadow_CreateBrushShaders ();
-	}
-	if (num_shadow_alias_glsl < ALIAS_GLSL_MODES) {
-		R_Shadow_CreateAliasShaders ();
-	}
-
 	if (!sun_light) {
 		sun_light = calloc (1, sizeof(r_shadow_light_t));
 		sun_light->enabled = true;
 		sun_light->type = r_shadow_light_type_sun;
 		sun_light->shadow_map_width = SUN_SHADOW_WIDTH;
 		sun_light->shadow_map_height = SUN_SHADOW_HEIGHT;
+		sun_light->bias = SUN_SHADOW_BIAS;
 		R_Shadow_LinkLight (sun_light);
 
 		R_Shadow_CreateFramebuffer (sun_light);
@@ -445,35 +458,247 @@ void R_Shadow_SetupSun (vec3_t angle)
 	GL_GetRandomTexture ();
 }
 
-#if 1
-void R_Shadow_AddSpotLight (const vec3_t pos, const vec3_t angles, float fov, float zfar)
+void R_Shadow_AddSpotLight(const vec3_t pos, const vec3_t angles, float fov, float zfar)
 {
-	r_shadow_light_t* l = calloc (1, sizeof(r_shadow_light_t));
+	if (!zfar) {
+		zfar = 300;
+	}
+
+	r_shadow_light_t* l = calloc(1, sizeof(r_shadow_light_t));
 	l->enabled = true;
+	l->type = r_shadow_light_type_spot;
+	l->bias = SPOT_SHADOW_BIAS;
+	l->radius = zfar;
 	l->shadow_map_width = SPOT_SHADOW_WIDTH;
 	l->shadow_map_height = SPOT_SHADOW_HEIGHT;
 
-	VectorCopy (pos, l->light_position);
+	VectorCopy(pos, l->light_position);
 
 	l->light_angles[0] = -angles[1];
 	l->light_angles[1] = angles[0];
 	l->light_angles[2] = angles[2];
 
 	vec3_t fwd, right, up;
-	AngleVectors (l->light_angles, fwd, right, up);
-	VectorCopy (fwd, l->light_normal);
+	AngleVectors(l->light_angles, fwd, right, up);
+	VectorCopy(fwd, l->light_normal);
 
 	mat4_t view_matrix, proj_matrix;
-	Matrix4_ViewMatrix (l->light_angles, l->light_position, view_matrix);
-	Matrix4_ProjectionMatrix (fov, fov, 1.0f, zfar, false, 0, 0, proj_matrix);
-	Matrix4_Multiply (proj_matrix, view_matrix, l->shadow_map_projview);
-	memcpy (l->world_to_shadow_map, l->shadow_map_projview, sizeof(l->shadow_map_projview));
+	Matrix4_ViewMatrix(l->light_angles, l->light_position, view_matrix);
+	Matrix4_ProjectionMatrix(fov, fov, 1.0f, zfar, false, 0, 0, proj_matrix);
+	Matrix4_Multiply(proj_matrix, view_matrix, l->shadow_map_projview);
+	memcpy(l->world_to_shadow_map, l->shadow_map_projview, sizeof(l->shadow_map_projview));
 
-	R_Shadow_CreateFramebuffer (l);
+	R_Shadow_CreateFramebuffer(l);
 
-	R_Shadow_LinkLight (l);
+	R_Shadow_LinkLight(l);
+
+	Con_Printf("Added shadow spotlight.\n");
 }
-#endif
+
+enum shadow_entity { entity_invalid, entity_worldspawn, entity_light };
+
+static qboolean worldsun;
+static vec3_t worldsunangle;
+static qboolean shadowlight;
+static vec3_t shadowlightorigin;
+static vec3_t shadowlightangle;
+static float shadowlightconeangle;
+static float shadowlightradius;
+static qboolean shadowlightspot;
+
+static void R_Shadow_HandleEntityKey (enum shadow_entity t, const char* key, size_t keylen, const char* value, size_t valuelen)
+{
+	char* v = malloc (valuelen + 1);
+	v[valuelen] = '\0';
+	memcpy (v, value, valuelen);
+
+	if (t == entity_worldspawn) {
+		if (!strncmp(key, "_shadowsunangle", keylen)) {
+			Cmd_TokenizeString (v);
+			worldsunangle[0] = Q_atof (Cmd_Argv(0));
+			worldsunangle[1] = Q_atof (Cmd_Argv(1));
+			worldsunangle[2] = Q_atof (Cmd_Argv(2));
+			worldsun = true;
+		}
+	}
+	else if (t == entity_light) {
+		if (!strncmp(key, "_shadowlight", keylen)) {
+			shadowlight = true;
+		}
+		else if (!strncmp(key, "origin", keylen)) {
+			Cmd_TokenizeString (v);
+			shadowlightorigin[0] = Q_atof (Cmd_Argv(0));
+			shadowlightorigin[1] = Q_atof (Cmd_Argv(1));
+			shadowlightorigin[2] = Q_atof (Cmd_Argv(2));
+		}
+		else if (!strncmp(key, "mangle", keylen)) {
+			Cmd_TokenizeString (v);
+			shadowlightangle[0] = Q_atof (Cmd_Argv(0));
+			shadowlightangle[1] = Q_atof (Cmd_Argv(1));
+			shadowlightangle[2] = Q_atof (Cmd_Argv(2));
+			shadowlightspot = true;
+		}
+		else if (!strncmp(key, "_shadowlightconeangle", keylen)) {
+			shadowlightconeangle = Q_atof (v);
+		}
+		else if (!strncmp(key, "_shadowlightradius", keylen)) {
+			shadowlightradius = Q_atof (v);
+		}
+	}
+	free (v);
+}
+
+static void R_Shadow_EndEntity (enum shadow_entity t)
+{
+	if (t == entity_light && shadowlight) {
+		if (shadowlightspot) {
+			R_Shadow_AddSpotLight (shadowlightorigin, shadowlightangle, shadowlightconeangle, shadowlightradius);
+		}
+	}
+	else if (t == entity_worldspawn && worldsun) {
+		R_Shadow_SetupSun (worldsunangle);
+	}
+
+	memset (shadowlightorigin, 0, sizeof(shadowlightorigin));
+	memset (shadowlightangle, 0, sizeof(shadowlightangle));
+	shadowlightconeangle = 0.0f;
+	shadowlightradius = 0.0f;
+	shadowlight = false;
+}
+
+static void R_Shadow_ParseEntities (const char* ent_text)
+{
+    enum {
+        parse_initial,
+        parse_entity1,
+        parse_entity2,
+        parse_field_key,
+        parse_field_value,
+        parse_brushes,
+        parse_comment,
+    } state = parse_initial;
+
+    size_t field_begin = 0;
+    size_t field_end = 0;
+    const char* field_key;
+    const char* field_value;
+	size_t field_key_len;
+	size_t field_value_len;
+	size_t textsize = strlen(ent_text);
+	enum shadow_entity current_entity = entity_invalid;
+    
+    for (size_t offs = 0; offs < textsize; offs++) {
+        char c = ent_text[offs];
+        char cn = (offs < textsize-1) ? ent_text[offs+1] : 0;
+
+        switch (state) {
+        case parse_initial: {
+            if (c == '/' && cn == '/') {
+                state = parse_comment;
+                offs++;
+            }
+            else if (c == '{') {
+                state = parse_entity1;
+            }
+            break;
+        }
+        case parse_entity1: {
+            if (c == '"') {
+                state = parse_field_key;
+                field_begin = offs + 1;
+            }
+            else if (c == '{') {
+                state = parse_brushes;
+                field_begin = offs + 1;
+            }
+            else if (c == '}') {
+                state = parse_initial;
+				R_Shadow_EndEntity (current_entity);
+            }
+            break;
+        }
+        case parse_entity2: {
+            if (c == '"') {
+                state = parse_field_value;
+                field_begin = offs + 1;
+            }
+            break;
+        }
+        case parse_field_key: {
+            if (c == '"') {
+                state = parse_entity2;
+                field_key = ent_text+field_begin;
+				field_key_len = offs-field_begin;
+            }
+            break;
+        }
+        case parse_field_value: {
+            if (c == '"') {
+                state = parse_entity1;
+                field_value = ent_text+field_begin;
+				field_value_len = offs-field_begin;
+
+				if (!strncmp(field_key, "classname", field_key_len)) {
+					current_entity = entity_invalid;
+					if (!strncmp(field_value, "worldspawn", field_value_len)) {
+						current_entity = entity_worldspawn;
+					}
+					else if (!strncmp(field_value, "dynamiclight", field_value_len)) {
+						current_entity = entity_light;
+					}
+					else if (!strncmp(field_value, "light", field_value_len)) {
+						current_entity = entity_light;
+					}
+				}
+
+				if (!strncmp(field_key, "_shadowlight", strlen("_shadowlight"))) {
+					current_entity = entity_light;
+				}
+
+				R_Shadow_HandleEntityKey (current_entity, field_key, field_key_len, field_value, field_value_len);
+            }
+            break;
+        }
+        case parse_brushes: {
+            if (c == '}') {
+                state = parse_entity1;
+            }
+            break;
+        }
+        case parse_comment:
+            if (c == '\n') {
+                state = parse_initial;
+            }
+            break;
+        }
+    }
+}
+
+static void R_Shadow_ClearLights ()
+{
+	r_shadow_light_t* light = first_light;
+	r_shadow_light_t* next = NULL;
+	while (light) {
+		// GL_DeleteFramebuffersFunc (1, &light->shadow_map_fbo);
+		glDeleteTextures (1, &light->shadow_map_texture);
+
+		next = light->next;
+		free (light);
+		light = next;
+	}
+
+	sun_light = NULL;
+	first_light = NULL;
+	light_id_gen = 0;
+}
+
+void R_Shadow_NewMap ()
+{
+	R_Shadow_ClearLights ();
+	worldsun = false;
+	memset (worldsunangle, 0, sizeof(worldsunangle));
+	R_Shadow_ParseEntities (cl.worldmodel->entities);
+}
 
 //
 // Functions for drawing stuff to the Shadow Map
@@ -543,8 +768,6 @@ static void R_Shadow_DrawTextureChains (r_shadow_light_t* light, qmodel_t *model
 				bound = true;
 			}
 
-			GL_SelectTexture(GL_TEXTURE1);
-			GL_Bind(lightmaps[s->lightmaptexturenum].texture);
 			R_BatchSurface(s);
 
 			rs_brushpasses++;
@@ -842,7 +1065,7 @@ void R_Shadow_DrawEntities (r_shadow_light_t* light)
 
 static void R_Shadow_PrepareToRender (r_shadow_light_t* light)
 {
-	R_MarkSurfacesForLightShadowMap (light);
+	R_MarkSurfacesForLightShadowMap (light);	
 	if (r_shadow_sundebug.value) {
 		glViewport (0, 0, 1024, 1024);
 		glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -870,6 +1093,9 @@ static void R_Shadow_RenderSunShadowMap (r_shadow_light_t* light)
 
 static void R_Shadow_RenderSpotShadowMap (r_shadow_light_t* light)
 {
+	light->brighten = r_shadow_sunbrighten.value;
+	light->darken = r_shadow_sundarken.value;
+
 	R_Shadow_PrepareToRender (light);
 	R_Shadow_DrawTextureChains (light, cl.worldmodel, NULL, chain_world);
 	R_Shadow_DrawEntities (light);
@@ -888,6 +1114,8 @@ static void R_Shadow_AddLightToUniformBuffer (r_shadow_light_t* light)
 	ldata->light_type = (int)light->type;
 	ldata->brighten = light->brighten;
 	ldata->darken = light->darken;
+	ldata->bias = light->bias;
+	ldata->radius = light->radius;
 	VectorCopy (light->light_position, ldata->light_position);
 	VectorCopy (light->light_normal, ldata->light_normal);
 	memcpy (ldata->shadow_matrix, light->world_to_shadow_map, sizeof(mat4_t));
@@ -948,6 +1176,8 @@ void R_Shadow_BindTextures (const GLuint* sampler_locations)
 
 void R_Shadow_RenderShadowMap ()
 {
+	last_light_rendered = NULL;
+
 	for (r_shadow_light_t* light = first_light; light; light = light->next) {
 		light->rendered = false;
 		switch (light->type) {
@@ -981,9 +1211,9 @@ void R_Shadow_RenderShadowMap ()
 			r_refdef.vrect.width / scale,
 			r_refdef.vrect.height / scale);
 		//johnfitz
-
-		R_MarkSurfaces (); // Mark surfaces here because we disabled in R_SetupView
 	}
+
+	R_MarkSurfaces (); // Mark surfaces here because we disabled in R_SetupView
 }
 
 r_shadow_light_t* R_Shadow_GetSunLight ()
@@ -1021,13 +1251,13 @@ static const GLchar *shadow_brush_fragment_shader = \
 	"smooth in vec2 texCoord;\n"
 	"\n"
 	"out vec4 ccolor;\n"
-	"out float fragmentdepth;\n"
+	"//out float fragmentdepth;\n"
 	"\n"
 	"void main()\n"
 	"{\n"
 	"   if (Debug == 1) { ccolor = vec4(gl_FragCoord.z); }\n"
 	"   else if (Debug == 2) { ccolor = texture2D(Tex, texCoord); }\n"
-	"   else { vec4 texcol = texture2D(Tex, texCoord); if (texcol.a<0.1) { discard; } else { fragmentdepth = gl_FragCoord.z; } }\n"
+	"   else { vec4 texcol = texture2D(Tex, texCoord); if (texcol.a<0.1) { discard; } else { gl_FragDepth = gl_FragCoord.z; } }\n"
 	"}\n";
 
 
@@ -1093,12 +1323,12 @@ static const GLchar *shadow_alias_fragment_shader = \
 	"smooth in vec2 texCoord;\n"
 	"\n"
 	"out vec4 ccolor;\n"
-	"out float fragmentdepth;\n"
+	"//out float fragmentdepth;\n"
 	"\n"
 	"void main()\n"
 	"{\n"
 	"   if (Alpha < 0.1) { discard; }\n"
 	"   if (Debug == 1) { ccolor = vec4(gl_FragCoord.z); }\n"
 	"   else if (Debug == 2) { ccolor = texture2D(Tex, texCoord); }\n"
-	"   else { vec4 texcol = texture2D(Tex, texCoord); if (texcol.a<0.1) { discard; } else { fragmentdepth = gl_FragCoord.z; } }\n"
+	"   else { vec4 texcol = texture2D(Tex, texCoord); if (texcol.a<0.1) { discard; } else { gl_FragDepth = gl_FragCoord.z; } }\n"
 	"}\n";

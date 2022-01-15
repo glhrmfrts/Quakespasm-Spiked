@@ -256,6 +256,8 @@ typedef struct r_shadow_light_s {
 	vec3_t light_angles; // (pitch yaw roll)
 	float brighten;
 	float darken;
+	float radius;
+	float bias;
 	int shadow_map_width;
 	int shadow_map_height;
 	GLuint shadow_map_fbo;
@@ -268,6 +270,8 @@ typedef struct r_shadow_light_s {
 } r_shadow_light_t;
 
 void R_Shadow_Init ();
+
+void R_Shadow_NewMap ();
 
 void R_Shadow_SetupSun (vec3_t angles);
 

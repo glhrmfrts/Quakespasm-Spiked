@@ -35,6 +35,8 @@
 	"	vec4 light_position;\n" \
 	"	float brighten;\n" \
 	"	float darken;\n" \
+	"	float radius;\n" \
+	"	float bias;\n" \
 	"	int light_type;\n" \
 	"};\n" \
 	"layout (std140) uniform shadow_data {\n" \
@@ -54,18 +56,21 @@
 	"	WorldCoord = (" vertName ").xyz;\n"
 
 #define SHADOW_SAMPLE_GLSL(vertNormal) \
-		"if (use_shadow) for (int i = 0; i < num_shadows; i++) {\n" \
-			SHADOW_POISSON_DISK_GLSL \
-		"		vec3 ShadowCoord = (shadows[i].shadow_matrix * vec4(WorldCoord, 1.0)).xyz;\n" \
-		"		float darken = shadows[i].darken/6.0; float brighten=shadows[i].brighten/6.0;\n" \
-		"		float shadowVis = 1.0;\n" \
-		"		float lightFactor = -dot(" vertNormal ", shadows[i].light_normal.xyz);\n" \
-		"		float bias = 0.010*lightFactor;\n" \
-		"		for (int j=0;j<6;j++) {\n" \
-		"			int index = j;     //int(floor(16.0*texture2D(random_tex, (WorldCoord.xy+WorldCoord.z)*j).r));\n" \
-		"           if (texture(shadow_map_samplers[i], vec3(ShadowCoord.xy+poissonDisk[index]/800.0,ShadowCoord.z-bias)) < 1.0) {\n" \
-		"                shadowVis -= darken;\n" \
-		"           } else { shadowVis += brighten * lightFactor;\n }\n" \
-		"       }\n" \
-		"		result = vec4(result.xyz * shadowVis, result.a);\n" \
-		"}\n"
+"if (use_shadow) for (int i = 0; i < num_shadows; i++) {\n" \
+	SHADOW_POISSON_DISK_GLSL \
+"		vec4 ShadowCoordv4 = (shadows[i].shadow_matrix * vec4(WorldCoord, 1.0));\n" \
+"		vec3 ShadowCoord;\n" \
+"		float lightFactor = -dot(" vertNormal ", shadows[i].light_normal.xyz);\n" \
+"		float bias = shadows[i].bias*lightFactor;\n" \
+"		if (shadows[i].light_type==1) { ShadowCoord = 0.5*(ShadowCoordv4.xyz/ShadowCoordv4.w)+0.5; } // spotlight\n" \
+"		else { ShadowCoord = ShadowCoordv4.xyz; }\n" \
+"		float darken = shadows[i].darken/6.0; float brighten=shadows[i].brighten/6.0;\n" \
+"		float shadowVis = 1.0;\n" \
+"		for (int j=0;j<6;j++) {\n" \
+"			int index = j;     //int(floor(16.0*texture2D(random_tex, (WorldCoord.xy+WorldCoord.z)*j).r));\n" \
+"           if (texture(shadow_map_samplers[i], vec3(ShadowCoord.xy+poissonDisk[index]/800.0,ShadowCoord.z-bias)) < 1.0) {\n" \
+"                shadowVis -= darken;\n" \
+"           } else { shadowVis += brighten * lightFactor;\n }\n" \
+"       }\n" \
+"		result = vec4(result.xyz * shadowVis, result.a);\n" \
+"}\n"
