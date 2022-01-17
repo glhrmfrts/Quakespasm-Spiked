@@ -102,6 +102,8 @@ typedef struct {
 	float bias;
 	float spot_cutoff;
 	int light_type;
+	int pad1;
+	int pad2;
 } shadow_ubo_single_t;
 
 typedef struct {
@@ -1174,7 +1176,7 @@ GLuint R_Shadow_GetUniformBuffer ()
 void R_Shadow_BindTextures (const GLuint* sampler_locations)
 {
 	for (int i = 0; i < shadow_ubo_data.num_shadow_maps; i++) {
-		GL_SelectTextureFunc (GL_TEXTURE0 + shadow_frame_textures[i].unit);
+		GL_SelectTexture (GL_TEXTURE0 + shadow_frame_textures[i].unit);
 		glBindTexture (GL_TEXTURE_2D, shadow_frame_textures[i].id);
 		GL_Uniform1iFunc (sampler_locations[i], shadow_frame_textures[i].unit);
 	}

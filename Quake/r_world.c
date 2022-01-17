@@ -1200,8 +1200,8 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 
 // gnemeth - get the shadow data
 	if (r_shadow_sun.value) {
-		GL_SelectTexture (RANDOM_TEXTURE_UNIT);
-		glBindTexture (GL_TEXTURE_2D, GL_GetRandomTexture());
+		// GL_SelectTexture (RANDOM_TEXTURE_UNIT);
+		// glBindTexture (GL_TEXTURE_2D, GL_GetRandomTexture());
 
 		R_Shadow_BindTextures (shadow_map_samplers_loc);
 	}
