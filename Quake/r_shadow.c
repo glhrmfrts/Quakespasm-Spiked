@@ -30,7 +30,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 //		- X? Correctly render fence textures in shadow map
 //		- XX Use Stratified Poisson Sampling
 //		- X Use UBO for sending data to shaders
-//		- Implement Spot lights shadows
+//		- X Implement Spot lights shadows
 //		- Implement Point lights shadows
 //		- Fix sampling
 
@@ -581,15 +581,15 @@ static void R_Shadow_EndEntity (enum shadow_entity t)
 
 static void R_Shadow_ParseEntities (const char* ent_text)
 {
-    enum {
-        parse_initial,
-        parse_entity1,
-        parse_entity2,
-        parse_field_key,
-        parse_field_value,
-        parse_brushes,
-        parse_comment,
-    } state = parse_initial;
+	enum {
+		parse_initial,
+		parse_entity1,
+		parse_entity2,
+		parse_field_key,
+		parse_field_value,
+		parse_brushes,
+		parse_comment,
+	} state = parse_initial;
 
 	size_t field_begin = 0;
 	size_t field_end = 0;
@@ -599,57 +599,57 @@ static void R_Shadow_ParseEntities (const char* ent_text)
 	size_t field_value_len;
 	size_t textsize = strlen(ent_text);
 	enum shadow_entity current_entity = entity_worldspawn;
-    
-    for (size_t offs = 0; offs < textsize; offs++) {
-        char c = ent_text[offs];
-        char cn = (offs < textsize-1) ? ent_text[offs+1] : 0;
+	
+	for (size_t offs = 0; offs < textsize; offs++) {
+		char c = ent_text[offs];
+		char cn = (offs < textsize-1) ? ent_text[offs+1] : 0;
 
-        switch (state) {
-        case parse_initial: {
-            if (c == '/' && cn == '/') {
-                state = parse_comment;
-                offs++;
-            }
-            else if (c == '{') {
-                state = parse_entity1;
-            }
-            break;
-        }
-        case parse_entity1: {
-            if (c == '"') {
-                state = parse_field_key;
-                field_begin = offs + 1;
-            }
-            else if (c == '{') {
-                state = parse_brushes;
-                field_begin = offs + 1;
-            }
-            else if (c == '}') {
-                state = parse_initial;
+		switch (state) {
+		case parse_initial: {
+			if (c == '/' && cn == '/') {
+				state = parse_comment;
+				offs++;
+			}
+			else if (c == '{') {
+				state = parse_entity1;
+			}
+			break;
+		}
+		case parse_entity1: {
+			if (c == '"') {
+				state = parse_field_key;
+				field_begin = offs + 1;
+			}
+			else if (c == '{') {
+				state = parse_brushes;
+				field_begin = offs + 1;
+			}
+			else if (c == '}') {
+				state = parse_initial;
 				R_Shadow_EndEntity (current_entity);
 				current_entity = entity_invalid;
-            }
-            break;
-        }
-        case parse_entity2: {
-            if (c == '"') {
-                state = parse_field_value;
-                field_begin = offs + 1;
-            }
-            break;
-        }
-        case parse_field_key: {
-            if (c == '"') {
-                state = parse_entity2;
-                field_key = ent_text+field_begin;
+			}
+			break;
+		}
+		case parse_entity2: {
+			if (c == '"') {
+				state = parse_field_value;
+				field_begin = offs + 1;
+			}
+			break;
+		}
+		case parse_field_key: {
+			if (c == '"') {
+				state = parse_entity2;
+				field_key = ent_text+field_begin;
 				field_key_len = offs-field_begin;
-            }
-            break;
-        }
-        case parse_field_value: {
-            if (c == '"') {
-                state = parse_entity1;
-                field_value = ent_text+field_begin;
+			}
+			break;
+		}
+		case parse_field_value: {
+			if (c == '"') {
+				state = parse_entity1;
+				field_value = ent_text+field_begin;
 				field_value_len = offs-field_begin;
 
 				if (!strncmp(field_key, "classname", field_key_len)) {
@@ -663,22 +663,22 @@ static void R_Shadow_ParseEntities (const char* ent_text)
 				}
 
 				R_Shadow_HandleEntityKey (current_entity, field_key, field_key_len, field_value, field_value_len);
-            }
-            break;
-        }
-        case parse_brushes: {
-            if (c == '}') {
-                state = parse_entity1;
-            }
-            break;
-        }
-        case parse_comment:
-            if (c == '\n') {
-                state = parse_initial;
-            }
-            break;
-        }
-    }
+			}
+			break;
+		}
+		case parse_brushes: {
+			if (c == '}') {
+				state = parse_entity1;
+			}
+			break;
+		}
+		case parse_comment:
+			if (c == '\n') {
+				state = parse_initial;
+			}
+			break;
+		}
+	}
 }
 
 static void R_Shadow_ClearLights ()
