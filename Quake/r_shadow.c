@@ -100,6 +100,7 @@ typedef struct {
 	float darken;
 	float radius;
 	float bias;
+	float spot_cutoff;
 	int light_type;
 } shadow_ubo_single_t;
 
@@ -508,17 +509,21 @@ static qboolean shadowlightspot;
 
 static void R_Shadow_HandleEntityKey (enum shadow_entity t, const char* key, size_t keylen, const char* value, size_t valuelen)
 {
+	if (keylen == 0) { return; }
+
 	char* v = malloc (valuelen + 1);
 	v[valuelen] = '\0';
 	memcpy (v, value, valuelen);
 
 	if (t == entity_worldspawn) {
-		if (!strncmp(key, "_shadowsunangle", keylen)) {
+		if (!strncmp(key, "_shadowsun", keylen)) {
+			worldsun = true;
+		}
+		else if (!strncmp(key, "_shadowsunangle", keylen)) {
 			Cmd_TokenizeString (v);
 			worldsunangle[0] = Q_atof (Cmd_Argv(0));
 			worldsunangle[1] = Q_atof (Cmd_Argv(1));
 			worldsunangle[2] = Q_atof (Cmd_Argv(2));
-			worldsun = true;
 		}
 	}
 	else if (t == entity_light) {
@@ -538,8 +543,13 @@ static void R_Shadow_HandleEntityKey (enum shadow_entity t, const char* key, siz
 			shadowlightangle[2] = Q_atof (Cmd_Argv(2));
 			shadowlightspot = true;
 		}
+		else if (!strncmp(key, "angle", keylen)) {
+			shadowlightconeangle = Q_atof (v);
+			shadowlightspot = true;
+		}
 		else if (!strncmp(key, "_shadowlightconeangle", keylen)) {
 			shadowlightconeangle = Q_atof (v);
+			shadowlightspot = true;
 		}
 		else if (!strncmp(key, "_shadowlightradius", keylen)) {
 			shadowlightradius = Q_atof (v);
@@ -564,6 +574,7 @@ static void R_Shadow_EndEntity (enum shadow_entity t)
 	shadowlightconeangle = 0.0f;
 	shadowlightradius = 0.0f;
 	shadowlight = false;
+	worldsun = false;
 }
 
 static void R_Shadow_ParseEntities (const char* ent_text)
@@ -578,14 +589,14 @@ static void R_Shadow_ParseEntities (const char* ent_text)
         parse_comment,
     } state = parse_initial;
 
-    size_t field_begin = 0;
-    size_t field_end = 0;
-    const char* field_key;
-    const char* field_value;
+	size_t field_begin = 0;
+	size_t field_end = 0;
+	const char* field_key;
+	const char* field_value;
 	size_t field_key_len;
 	size_t field_value_len;
 	size_t textsize = strlen(ent_text);
-	enum shadow_entity current_entity = entity_invalid;
+	enum shadow_entity current_entity = entity_worldspawn;
     
     for (size_t offs = 0; offs < textsize; offs++) {
         char c = ent_text[offs];
@@ -614,6 +625,7 @@ static void R_Shadow_ParseEntities (const char* ent_text)
             else if (c == '}') {
                 state = parse_initial;
 				R_Shadow_EndEntity (current_entity);
+				current_entity = entity_invalid;
             }
             break;
         }
@@ -639,19 +651,12 @@ static void R_Shadow_ParseEntities (const char* ent_text)
 				field_value_len = offs-field_begin;
 
 				if (!strncmp(field_key, "classname", field_key_len)) {
-					current_entity = entity_invalid;
 					if (!strncmp(field_value, "worldspawn", field_value_len)) {
 						current_entity = entity_worldspawn;
 					}
-					else if (!strncmp(field_value, "dynamiclight", field_value_len)) {
-						current_entity = entity_light;
-					}
-					else if (!strncmp(field_value, "light", field_value_len)) {
-						current_entity = entity_light;
-					}
 				}
 
-				if (!strncmp(field_key, "_shadowlight", strlen("_shadowlight"))) {
+				if (current_entity == entity_invalid && !strncmp(field_key, "_shadowlight", strlen("_shadowlight"))) {
 					current_entity = entity_light;
 				}
 
@@ -1059,13 +1064,13 @@ void R_Shadow_DrawEntities (r_shadow_light_t* light)
 			case mod_ext_invalid:
 				//nothing. could draw a blob instead.
 				break;
-		}
+		} 
 	}
 }
 
 static void R_Shadow_PrepareToRender (r_shadow_light_t* light)
 {
-	R_MarkSurfacesForLightShadowMap (light);	
+	R_MarkSurfacesForLightShadowMap (light);
 	if (r_shadow_sundebug.value) {
 		glViewport (0, 0, 1024, 1024);
 		glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -1116,6 +1121,7 @@ static void R_Shadow_AddLightToUniformBuffer (r_shadow_light_t* light)
 	ldata->darken = light->darken;
 	ldata->bias = light->bias;
 	ldata->radius = light->radius;
+	ldata->spot_cutoff = 0.3f;
 	VectorCopy (light->light_position, ldata->light_position);
 	VectorCopy (light->light_normal, ldata->light_normal);
 	memcpy (ldata->shadow_matrix, light->world_to_shadow_map, sizeof(mat4_t));

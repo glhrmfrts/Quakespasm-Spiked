@@ -738,8 +738,8 @@ static void GLWater_CreateShaders (void)
 		"}\n";
 
 	size_t i;
-	char vtext[1024*4];
-	char ftext[1024*4];
+	char vtext[1024*8];
+	char ftext[1024*8];
 	gl_glsl_water_able = false;
 
 	if (!gl_glsl_able)

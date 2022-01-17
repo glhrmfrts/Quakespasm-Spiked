@@ -29,22 +29,56 @@
 #define SHADOW_VERT_UNIFORMS_GLSL
 
 #define SHADOW_FRAG_UNIFORMS_GLSL \
-	"struct shadow_single_t {\n" \
-	"	mat4 shadow_matrix;\n" \
-	"	vec4 light_normal;\n" \
-	"	vec4 light_position;\n" \
-	"	float brighten;\n" \
-	"	float darken;\n" \
-	"	float radius;\n" \
-	"	float bias;\n" \
-	"	int light_type;\n" \
-	"};\n" \
-	"layout (std140) uniform shadow_data {\n" \
-	"	bool use_shadow;\n" \
-	"	int num_shadows;\n" \
-	"	shadow_single_t shadows[10];\n" \
-	"};\n" \
-	"uniform sampler2DShadow shadow_map_samplers[10];\n"
+"struct shadow_single_t {\n" \
+"	mat4 shadow_matrix;\n" \
+"	vec4 light_normal;\n" \
+"	vec4 light_position;\n" \
+"	float brighten;\n" \
+"	float darken;\n" \
+"	float radius;\n" \
+"	float bias;\n" \
+"	float spot_cutoff;\n" \
+"	int light_type;\n" \
+"};\n" \
+"layout (std140) uniform shadow_data {\n" \
+"	bool use_shadow;\n" \
+"	int num_shadows;\n" \
+"	shadow_single_t shadows[10];\n" \
+"};\n" \
+"uniform sampler2DShadow shadow_map_samplers[10];\n" \
+"\n" \
+SHADOW_POISSON_DISK_GLSL \
+"float CalcSunShadow(int idx, vec3 world_coord, vec3 world_normal) {\n" \
+"	vec3 shadow_coord = (shadows[idx].shadow_matrix * vec4(world_coord, 1.0)).xyz;\n" \
+"	float light_factor = dot(world_normal, shadows[idx].light_normal.xyz);\n" \
+"	float bias = shadows[idx].bias*(-light_factor);\n" \
+"	float darken = shadows[idx].darken/6.0;\n" \
+"	float result = 0.0f;\n" \
+"	for (int j=0;j<6;j++) {\n" \
+"		int index = j;     //int(floor(16.0*texture2D(random_tex, (WorldCoord.xy+WorldCoord.z)*j).r));\n" \
+"       if (texture(shadow_map_samplers[idx], vec3(shadow_coord.xy+poissonDisk[index]/800.0,shadow_coord.z-bias)) < 1.0) {\n" \
+"           result += darken*(-light_factor);\n" \
+"       }\n" \
+"   }\n" \
+"	return result;\n" \
+"}\n" \
+"\n" \
+"float CalcSpotShadow(int idx, vec3 world_coord, vec3 world_normal) {\n" \
+"	vec4 shadow_coord_v4 = (shadows[idx].shadow_matrix * vec4(world_coord, 1.0));\n" \
+"	vec3 shadow_coord = 0.5*(shadow_coord_v4.xyz/shadow_coord_v4.w)+0.5;\n" \
+"	float light_factor = dot(normalize(world_coord - shadows[idx].light_position.xyz), shadows[idx].light_normal.xyz);\n" \
+"	if (light_factor <= shadows[idx].spot_cutoff) { return 0.0f; }\n" \
+"	float bias = shadows[idx].bias*(light_factor);\n" \
+"	float darken = shadows[idx].darken/6.0;\n" \
+"	float result = 0.0f;\n" \
+"	for (int j=0;j<6;j++) {\n" \
+"		int index = j;     //int(floor(16.0*texture2D(random_tex, (WorldCoord.xy+WorldCoord.z)*j).r));\n" \
+"       if (texture(shadow_map_samplers[idx], vec3(shadow_coord.xy+poissonDisk[index]/800.0,shadow_coord.z-bias)) < 1.0) {\n" \
+"           result += darken*(light_factor);\n" \
+"       }\n" \
+"   }\n" \
+"	return result;\n" \
+"}\n"
 
 #define SHADOW_VERT_OUTPUT_GLSL \
 	"out vec3 WorldCoord;\n"
@@ -57,20 +91,8 @@
 
 #define SHADOW_SAMPLE_GLSL(vertNormal) \
 "if (use_shadow) for (int i = 0; i < num_shadows; i++) {\n" \
-	SHADOW_POISSON_DISK_GLSL \
-"		vec4 ShadowCoordv4 = (shadows[i].shadow_matrix * vec4(WorldCoord, 1.0));\n" \
-"		vec3 ShadowCoord;\n" \
-"		float lightFactor = -dot(" vertNormal ", shadows[i].light_normal.xyz);\n" \
-"		float bias = shadows[i].bias*lightFactor;\n" \
-"		if (shadows[i].light_type==1) { ShadowCoord = 0.5*(ShadowCoordv4.xyz/ShadowCoordv4.w)+0.5; } // spotlight\n" \
-"		else { ShadowCoord = ShadowCoordv4.xyz; }\n" \
-"		float darken = shadows[i].darken/6.0; float brighten=shadows[i].brighten/6.0;\n" \
-"		float shadowVis = 1.0;\n" \
-"		for (int j=0;j<6;j++) {\n" \
-"			int index = j;     //int(floor(16.0*texture2D(random_tex, (WorldCoord.xy+WorldCoord.z)*j).r));\n" \
-"           if (texture(shadow_map_samplers[i], vec3(ShadowCoord.xy+poissonDisk[index]/800.0,ShadowCoord.z-bias)) < 1.0) {\n" \
-"                shadowVis -= darken;\n" \
-"           } else { shadowVis += brighten * lightFactor;\n }\n" \
-"       }\n" \
-"		result = vec4(result.xyz * shadowVis, result.a);\n" \
+"	float shadow_factor;" \
+"	if (shadows[i].light_type==0) { shadow_factor = CalcSunShadow(i, WorldCoord, " vertNormal "); }\n" \
+"	else if (shadows[i].light_type==1) { shadow_factor = CalcSpotShadow(i, WorldCoord, " vertNormal "); }\n" \
+"	result = vec4(result.xyz * (1.0f - shadow_factor), result.a);\n" \
 "}\n"
