@@ -85,7 +85,10 @@ typedef struct
 	GLuint normalMatrixLoc;
 	GLuint viewProjectionMatrixLoc;
 
+	GLuint fog_data_block_index;
 	GLuint shadow_data_block_index;
+	GLuint shadow_map_samplers_loc[MAX_FRAME_SHADOWS];
+
 } aliasglsl_t;
 static aliasglsl_t r_alias_glsl[ALIAS_GLSL_MODES];
 
@@ -340,6 +343,15 @@ void GLAlias_CreateShaders (void)
 			glsl->normalMatrixLoc = GL_GetUniformLocation (&glsl->program, "NormalMatrix");
 			glsl->viewProjectionMatrixLoc = GL_GetUniformLocation (&glsl->program, "ViewProjectionMatrix");
 
+			for (int si = 0; si < MAX_FRAME_SHADOWS; si++) {
+				static char uniform_name[] = "shadow_map_samplers[#]";
+				uniform_name[strlen(uniform_name) - 2] = '0' + si;
+				glsl->shadow_map_samplers_loc[si] = GL_GetUniformLocation (&glsl->program, uniform_name);
+			}
+
+			glsl->fog_data_block_index = GL_GetUniformBlockIndexFunc (glsl->program, "fog_data");
+			GL_UniformBlockBindingFunc (glsl->program, glsl->fog_data_block_index, FOG_UBO_BINDING_POINT);
+
 			glsl->shadow_data_block_index = GL_GetUniformBlockIndexFunc (glsl->program, "shadow_data");
 			GL_UniformBlockBindingFunc (glsl->program, glsl->shadow_data_block_index, SHADOW_UBO_BINDING_POINT);
 		}
@@ -457,10 +469,7 @@ void GL_DrawAliasFrame_GLSL (aliasglsl_t *glsl, aliashdr_t *paliashdr, lerpdata_
 
 // gnemeth - get the shadow data
 	if (r_shadow_sun.value) {
-		//GL_SelectTexture (RANDOM_TEXTURE_UNIT);
-		//glBindTexture (GL_TEXTURE_2D, GL_GetRandomTexture());
-
-		// R_Shadow_BindTextures ();
+		R_Shadow_BindTextures (glsl->shadow_map_samplers_loc);
 	}
 	
 // set textures

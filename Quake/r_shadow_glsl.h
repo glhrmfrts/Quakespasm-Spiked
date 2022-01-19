@@ -94,5 +94,6 @@ SHADOW_POISSON_DISK_GLSL \
 "	float shadow_factor;" \
 "	if (shadows[i].light_type==0) { shadow_factor = CalcSunShadow(i, WorldCoord, " vertNormal "); }\n" \
 "	else if (shadows[i].light_type==1) { shadow_factor = CalcSpotShadow(i, WorldCoord, " vertNormal "); }\n" \
-"	result = vec4(result.xyz * (1.0f - shadow_factor), result.a);\n" \
+"	//result = vec4(result.xyz * (1.0f - shadow_factor), result.a);\n" \
+"  lighting *= (1.0 - shadow_factor);\n" \
 "}\n"

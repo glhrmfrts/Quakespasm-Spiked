@@ -27,6 +27,27 @@ int	r_dlightframecount;
 
 extern cvar_t r_flatlightstyles; //johnfitz
 
+// gnemeth -- dynamic lights ubo
+typedef struct {
+	vec4_t color;
+	vec4_t position;
+	float radius;
+	float pad1;
+	float pad2;
+	float pad3;
+} gl_dlight_ubo_single_t;
+
+typedef struct {
+	int num_lights;
+	int pad1;
+	int pad2;
+	int pad3;
+	gl_dlight_ubo_single_t lights[MAX_DLIGHTS];
+} gl_dlight_ubo_data_t;
+
+static gl_dlight_ubo_data_t gl_dlight_ubo_data;
+static GLuint gl_dlight_ubo;
+
 //Spike - made this a general function
 void CL_UpdateLightstyle(unsigned int idx, const char *str)
 {
@@ -276,12 +297,31 @@ void R_PushDlights (void)
 		return;
 	l = cl_dlights;
 
+	gl_dlight_ubo_data.num_lights = 0;
+
 	for (i=0 ; i<MAX_DLIGHTS ; i++, l++)
 	{
 		if (l->die < cl.time || !l->radius)
 			continue;
-		R_MarkLights (l, l->origin, i, cl.worldmodel->nodes);
+		// R_MarkLights (l, l->origin, i, cl.worldmodel->nodes);
+
+		gl_dlight_ubo_single_t* dldata = &gl_dlight_ubo_data.lights[gl_dlight_ubo_data.num_lights++];
+		VectorCopy (l->color, dldata->color);
+		VectorCopy (l->origin, dldata->position);
+		dldata->radius = l->radius;
 	}
+
+	if (!gl_dlight_ubo) {
+		GL_GenBuffersFunc (1, &gl_dlight_ubo);
+		GL_BindBufferFunc (GL_UNIFORM_BUFFER, gl_dlight_ubo);
+		GL_BufferDataFunc (GL_UNIFORM_BUFFER, sizeof(gl_dlight_ubo_data), &gl_dlight_ubo_data, GL_DYNAMIC_DRAW);
+		GL_BindBufferFunc (GL_UNIFORM_BUFFER, 0);
+		GL_BindBufferBaseFunc (GL_UNIFORM_BUFFER, DLIGHT_UBO_BINDING_POINT, gl_dlight_ubo);
+	}
+
+	GL_BindBufferFunc (GL_UNIFORM_BUFFER, gl_dlight_ubo);
+	GL_BufferDataFunc (GL_UNIFORM_BUFFER, sizeof(gl_dlight_ubo_data), &gl_dlight_ubo_data, GL_DYNAMIC_DRAW);
+	GL_BindBufferFunc (GL_UNIFORM_BUFFER, 0);
 }
 
 

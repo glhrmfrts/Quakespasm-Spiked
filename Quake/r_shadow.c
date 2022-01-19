@@ -31,14 +31,18 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 //		- XX Use Stratified Poisson Sampling
 //		- X Use UBO for sending data to shaders
 //		- X Implement Spot lights shadows
+//		- X Re-implement sampling shadow map in water and alias models
+//		- X Implement dlights in fragment shader instead of modifying lightmaps
+//		- Fix rendering of sprites with the new Fog UBO
+//		- Implement HDR rendering
+//		- Implement FXAA
+//		- Implement Motion Blur
+//		- Implement Volumetric Lighting for the Sun
+//		- Find how to implement shadows for the vanilla sky clouds
+//		- Find a way to sample the Shadow map in the CPU for entities
 //		- Implement Point lights shadows
 //		- Fix sampling
-
-//		- Implement HDR rendering
-//		- Implement MSAA support
-//		- Implement Motion Blur
 //		- Implement SSR for water
-//
 
 #include "quakedef.h"
 #include "glquake.h"
@@ -473,7 +477,7 @@ void R_Shadow_AddSpotLight(const vec3_t pos, const vec3_t angles, float fov, flo
 	l->bias = SPOT_SHADOW_BIAS;
 	l->radius = zfar;
 	l->shadow_map_width = SPOT_SHADOW_WIDTH;
-	l->shadow_map_height = SPOT_SHADOW_HEIGHT;
+	l->shadow_map_height = SPOT_SHADOW_HEIGHT;	
 
 	VectorCopy(pos, l->light_position);
 
@@ -1221,7 +1225,7 @@ void R_Shadow_RenderShadowMap ()
 		//johnfitz
 	}
 
-	R_MarkSurfaces (); // Mark surfaces here because we disabled in R_SetupView
+	if (r_shadow_sun.value) { R_MarkSurfaces(); } // Mark surfaces here because we disabled in R_SetupView
 }
 
 r_shadow_light_t* R_Shadow_GetSunLight ()

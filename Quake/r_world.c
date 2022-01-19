@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "r_shadow_glsl.h"
 #include "gl_random_texture.h"
 #include "gl_fog.h"
+#include "gl_rlight_glsl.h"
 
 extern cvar_t gl_fullbrights, r_drawflat, gl_overbright, r_oldskyleaf, r_showtris; //johnfitz
 
@@ -606,7 +607,9 @@ static struct
 	GLuint time;
 	GLuint view_projection_matrix;
 
+	GLuint fog_data_block_index;
 	GLuint shadow_data_block_index;
+	GLuint shadow_map_samplers_loc[MAX_FRAME_SHADOWS];
 } r_water[2];
 
 #define vertAttrIndex 0
@@ -763,6 +766,15 @@ static void GLWater_CreateShaders (void)
 			r_water[i].time					  = GL_GetUniformLocation (&r_water[i].program, "WarpTime");
 			r_water[i].view_projection_matrix = GL_GetUniformLocation (&r_water[i].program, "ViewProjectionMatrix");
 
+			for (int si = 0; si < MAX_FRAME_SHADOWS; si++) {
+				static char uniform_name[] = "shadow_map_samplers[#]";
+				uniform_name[strlen(uniform_name) - 2] = '0' + si;
+				r_water[i].shadow_map_samplers_loc[si] = GL_GetUniformLocation (&r_water[i].program, uniform_name);
+			}
+
+			r_water[i].fog_data_block_index = GL_GetUniformBlockIndexFunc (r_water[i].program, "fog_data");
+			GL_UniformBlockBindingFunc (r_water[i].program, r_water[i].fog_data_block_index, FOG_UBO_BINDING_POINT);
+
 			r_water[i].shadow_data_block_index = GL_GetUniformBlockIndexFunc (r_water[i].program, "shadow_data");
 			GL_UniformBlockBindingFunc (r_water[i].program, r_water[i].shadow_data_block_index, SHADOW_UBO_BINDING_POINT);
 
@@ -833,7 +845,7 @@ void R_DrawTextureChains_Water (qmodel_t *model, entity_t *ent, texchain_t chain
 
 			GL_SelectTexture (GL_TEXTURE0);
 			GL_Bind (t->gltexture);
-			GL_SelectTexture (GL_TEXTURE1);
+
 			for (; s; s = s->texturechain)
 			{
 				if (s->lightmaptexturenum != lastlightmap)
@@ -844,6 +856,7 @@ void R_DrawTextureChains_Water (qmodel_t *model, entity_t *ent, texchain_t chain
 					if (mode)
 					{
 						GL_EnableVertexAttribArrayFunc (LMCoordsAttrIndex);
+						GL_SelectTexture(GL_TEXTURE1);
 						GL_Bind (lightmaps[s->lightmaptexturenum].texture);
 					}
 					else
@@ -858,7 +871,7 @@ void R_DrawTextureChains_Water (qmodel_t *model, entity_t *ent, texchain_t chain
 						1, false, (const GLfloat*)r_projection_view_matrix);
 
 					if (r_shadow_sun.value) {
-						// R_Shadow_BindTextures ();
+						R_Shadow_BindTextures (r_water[mode].shadow_map_samplers_loc);
 					}
 
 					lastlightmap = s->lightmaptexturenum;
@@ -987,6 +1000,7 @@ static GLuint alphaLoc;
 static GLuint modelMatrixLoc;
 static GLuint viewProjectionMatrixLoc;
 
+static GLuint dlight_data_block_index;
 static GLuint fog_data_block_index;
 
 static GLuint shadow_data_block_index;
@@ -1065,6 +1079,8 @@ void GLWorld_CreateShaders (void)
 
 		FOG_FRAG_UNIFORMS_GLSL
 
+		DLIGHT_FRAG_UNIFORMS_GLSL
+
 		"\n"
 		"in float FogFragCoord;\n"
 		"in vec2 tc_tex;\n"
@@ -1081,17 +1097,27 @@ void GLWorld_CreateShaders (void)
 		"	vec4 result = texture2D(Tex, tc_tex.xy);\n"
 		"	if (UseAlphaTest && (result.a < 0.666))\n"
 		"		discard;\n"
-		"	result *= texture2D(LMTex, tc_lm.xy);\n"
-		"	if (UseOverbright)\n"
-		"		result.rgb *= 2.0;\n"
-		"	if (UseFullbrightTex)\n"
-		"		result += texture2D(FullbrightTex, tc_tex.xy);\n"
-		"	result = clamp(result, 0.0, 1.0);\n"
+		"	vec4 lightmap_color = texture2D(LMTex, tc_lm.xy);\n"
+		"   vec4 lighting = lightmap_color;\n"
 		"\n"
 
 		SHADOW_SAMPLE_GLSL("v_Normal")
 
 		"\n"
+
+		DLIGHT_SAMPLE_GLSL("v_Normal")
+
+		"\n"
+
+		"	lighting = clamp(lighting, 0.0, 1.0);\n"
+		"	result *= lighting;\n"
+
+		"	if (UseOverbright)\n"
+		"		result.rgb *= 2.0;\n"
+		"	if (UseFullbrightTex)\n"
+		"		result += texture2D(FullbrightTex, tc_tex.xy);\n"
+
+		"	result = clamp(result, 0.0, 1.0);\n"
 
 		FOG_CALC_GLSL
 		
@@ -1125,6 +1151,9 @@ void GLWorld_CreateShaders (void)
 			uniform_name[strlen(uniform_name) - 2] = '0' + si;
 			shadow_map_samplers_loc[si] = GL_GetUniformLocation (&r_world_program, uniform_name);
 		}
+
+		dlight_data_block_index = GL_GetUniformBlockIndexFunc (r_world_program, "dlight_data");
+		GL_UniformBlockBindingFunc (r_world_program, dlight_data_block_index, DLIGHT_UBO_BINDING_POINT);
 
 		fog_data_block_index = GL_GetUniformBlockIndexFunc (r_world_program, "fog_data");
 		GL_UniformBlockBindingFunc (r_world_program, fog_data_block_index, FOG_UBO_BINDING_POINT);

@@ -321,7 +321,8 @@ extern STQ_PFNGLUNMAPBUFFERPROC GL_UnmapBufferFunc;
 
 enum {
 	FOG_UBO_BINDING_POINT = 0,
-	SHADOW_UBO_BINDING_POINT = 1,
+	DLIGHT_UBO_BINDING_POINT = 1,
+	SHADOW_UBO_BINDING_POINT = 2,
 };
 
 // gnemeth -- geometry and vertex attributes

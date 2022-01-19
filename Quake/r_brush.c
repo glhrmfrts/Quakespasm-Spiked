@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // r_brush.c: brush model rendering. renamed from r_surf.c
 
 #include "quakedef.h"
+#include <time.h>
 
 extern cvar_t gl_fullbrights, r_drawflat, gl_overbright, r_oldwater; //johnfitz
 extern cvar_t gl_zfix; // QuakeSpasm z-fighting fix
@@ -1287,8 +1288,8 @@ void R_BuildLightMap (qmodel_t *model, msurface_t *surf, byte *dest, int stride)
 		}
 
 	// add all the dynamic lights
-		if (surf->dlightframe == r_framecount)
-			R_AddDynamicLights (surf);
+		//if (surf->dlightframe == r_framecount)
+			//R_AddDynamicLights (surf);
 	}
 	else
 	{
