@@ -1330,11 +1330,17 @@ void SV_CheckWaterTransition (edict_t *ent)
 		return;
 	}
 
+	vec3_t partdir;
+	partdir[0] = ent->v.velocity[0]*0.75f;
+	partdir[1] = ent->v.velocity[1]*0.75f;
+	partdir[2] = -ent->v.velocity[2]*0.75f;
+
 	if (cont <= CONTENTS_WATER)
 	{
 		if (ent->v.watertype == CONTENTS_EMPTY && *sv_sound_watersplash.string)
 		{	// just crossed into water
 			World_StartSound (ent, NULL, 0, sv_sound_watersplash.string, 255, 1);
+			SV_StartParticle (ent->v.origin, partdir, 2, 64);
 		}
 		ent->v.watertype = cont;
 		ent->v.waterlevel = 1;
@@ -1344,6 +1350,7 @@ void SV_CheckWaterTransition (edict_t *ent)
 		if (ent->v.watertype != CONTENTS_EMPTY && *sv_sound_watersplash.string)
 		{	// just crossed into water
 			World_StartSound (ent, NULL, 0, sv_sound_watersplash.string, 255, 1);
+			SV_StartParticle (ent->v.origin, partdir, 2, 64);
 		}
 		ent->v.watertype = CONTENTS_EMPTY;
 		ent->v.waterlevel = cont;

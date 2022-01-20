@@ -971,7 +971,6 @@ void CL_RunParticles (void)
 			break;
 		}
 
-#if 1
 		// hack a scale up to keep particles from disapearing
 		float scale = (p->org[0] - r_origin[0]) * vpn[0]
 			+ (p->org[1] - r_origin[1]) * vpn[1]
@@ -995,7 +994,6 @@ void CL_RunParticles (void)
 		part_verts[num_particles].color[1] = (float)c[1]/255.0f;
 		part_verts[num_particles].color[2] = (float)c[2]/255.0f;
 		part_verts[num_particles].color[3] = alpha;
-#endif
 		num_particles++;
 	}
 
@@ -1012,12 +1010,8 @@ R_DrawParticles -- johnfitz -- moved all non-drawing code to CL_RunParticles
 void R_DrawParticles (void)
 {
 	particle_t		*p;
-	float			scale;
-	vec3_t			up, right, left, down;
-	vec3_t			v0, v1, v2, v3;
-	vec3_t			p_v0, p_v1, p_v2, p_v3;
+	vec3_t			up, right;
 
-	GLubyte			color[4], *c; //johnfitz -- particle transparency
 	extern	cvar_t	r_particles; //johnfitz
 	//float			alpha; //johnfitz -- particle transparency
 
@@ -1032,12 +1026,11 @@ void R_DrawParticles (void)
 
 	// gnemeth -- using vbo for particles
 
-#if 1
-#if 1
-	VectorScale(vup, 1.25, up);
-	VectorScale(vright, 1.25, right);
+	VectorScale (vup, 1.25, up);
+	VectorScale (vright, 1.25, right);
 
 	glEnable (GL_BLEND);
+	glDepthMask (GL_FALSE);
 
 	GL_UseProgramFunc (part_program);
 
@@ -1059,126 +1052,10 @@ void R_DrawParticles (void)
 
 	glDrawArrays (GL_POINTS, 0, frame_particles);
 	glDisable (GL_BLEND);
+	glDepthMask (GL_TRUE);
 
 	GL_BindBufferFunc (GL_ARRAY_BUFFER, 0);
 	GL_UseProgramFunc (0);
-#endif
-#else
-
-	VectorScale(vup, 1.25, up);
-	VectorScale(vright, 1.25, right);
-
-	VectorCopy(up, down);
-	VectorInverse(down);
-
-	VectorCopy(right, left);
-	VectorInverse(left);
-
-	VectorAdd(down, left, v0);
-	VectorAdd(up, left, v1);
-	VectorAdd(down, right, v2);
-	VectorAdd(up, right, v3);
-
-	vec3_t p_up, p_right, p_upright;
-
-	glEnable (GL_BLEND);
-	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-	glDepthMask (GL_FALSE); //johnfitz -- fix for particle z-buffer bug
-
-	if (r_quadparticles.value) //johnitz -- quads save fillrate
-	{
-		glBegin (GL_QUADS);
-		for (p=active_particles ; p ; p=p->next)
-		{
-			// hack a scale up to keep particles from disapearing
-			scale = (p->org[0] - r_origin[0]) * vpn[0]
-				  + (p->org[1] - r_origin[1]) * vpn[1]
-				  + (p->org[2] - r_origin[2]) * vpn[2];
-			if (scale < 20)
-				scale = 1 + 0.08; //johnfitz -- added .08 to be consistent
-			else
-				scale = 1 + scale * 0.004;
-
-			scale /= 2.0; //quad is half the size of triangle
-
-			scale *= texturescalefactor; //johnfitz -- compensate for apparent size of different particle textures
-
-			//johnfitz -- particle transparency and fade out
-			c = (GLubyte *) &d_8to24table[(int)p->color];
-			color[0] = c[0];
-			color[1] = c[1];
-			color[2] = c[2];
-			//alpha = CLAMP(0, p->die + 0.5 - cl.time, 1);
-			color[3] = 255; //(int)(alpha * 255);
-			glColor4ubv(color);
-			//johnfitz
-
-			glTexCoord2f (0,0);
-			glVertex3fv (p->org);
-
-			glTexCoord2f (0.5,0);
-			VectorMA (p->org, scale, up, p_up);
-			glVertex3fv (p_up);
-
-			glTexCoord2f (0.5,0.5);
-			VectorMA (p_up, scale, right, p_upright);
-			glVertex3fv (p_upright);
-
-			glTexCoord2f (0,0.5);
-			VectorMA (p->org, scale, right, p_right);
-			glVertex3fv (p_right);
-
-			rs_particles++; //johnfitz //FIXME: just use r_numparticles
-		}
-		glEnd ();
-	}
-	else //johnitz --  triangles save verts
-	{
-		glBegin (GL_TRIANGLES);
-		for (p=active_particles ; p ; p=p->next)
-		{
-			// hack a scale up to keep particles from disapearing
-			scale = (p->org[0] - r_origin[0]) * vpn[0]
-				  + (p->org[1] - r_origin[1]) * vpn[1]
-				  + (p->org[2] - r_origin[2]) * vpn[2];
-			if (scale < 20)
-				scale = 1 + 0.08; //johnfitz -- added .08 to be consistent
-			else
-				scale = 1 + scale * 0.004;
-
-			scale *= texturescalefactor; //johnfitz -- compensate for apparent size of different particle textures
-
-			//johnfitz -- particle transparency and fade out
-			c = (GLubyte *) &d_8to24table[(int)p->color];
-			color[0] = c[0];
-			color[1] = c[1];
-			color[2] = c[2];
-			//alpha = CLAMP(0, p->die + 0.5 - cl.time, 1);
-			color[3] = 255; //(int)(alpha * 255);
-			glColor4ubv(color);
-			//johnfitz
-
-			glTexCoord2f (0,0);
-			glVertex3fv (p->org);
-
-			glTexCoord2f (1,0);
-			VectorMA (p->org, scale, up, p_up);
-			glVertex3fv (p_up);
-
-			glTexCoord2f (0,1);
-			VectorMA (p->org, scale, right, p_right);
-			glVertex3fv (p_right);
-
-			rs_particles++; //johnfitz //FIXME: just use r_numparticles
-		}
-		glEnd ();
-	}
-
-	glDepthMask (GL_TRUE); //johnfitz -- fix for particle z-buffer bug
-	glDisable (GL_BLEND);
-	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
-	glColor3f(1,1,1);
-#endif
 }
 
 
