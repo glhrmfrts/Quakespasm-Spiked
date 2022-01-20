@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "r_shadow_glsl.h"
+#include "gl_rlight_glsl.h"
 #include "gl_fog.h"
 
 extern cvar_t r_drawflat, gl_overbright_models, gl_fullbrights, r_lerpmodels, r_lerpmove; //johnfitz
@@ -85,6 +86,7 @@ typedef struct
 	GLuint normalMatrixLoc;
 	GLuint viewProjectionMatrixLoc;
 
+	GLuint dlight_data_block_index;
 	GLuint fog_data_block_index;
 	GLuint shadow_data_block_index;
 	GLuint shadow_map_samplers_loc[MAX_FRAME_SHADOWS];
@@ -266,6 +268,8 @@ void GLAlias_CreateShaders (void)
 
 		SHADOW_FRAG_UNIFORMS_GLSL
 
+		DLIGHT_FRAG_UNIFORMS_GLSL
+
 		SHADOW_FRAG_INPUT_GLSL
 
 		"\n"
@@ -282,15 +286,23 @@ void GLAlias_CreateShaders (void)
 		"	vec4 result = texture2D(Tex, v_TexCoord);\n"
 		"	if (UseAlphaTest && (result.a < 0.666))\n"
 		"		discard;\n"
-		"	result *= v_Color;\n"
+		"	vec3 fragNormal = (NormalMatrix * vec4(v_Normal, 1.0)).xyz;\n"
+
+		"	vec4 lighting = v_Color;\n"
+
+		SHADOW_SAMPLE_GLSL("fragNormal")
+
+		DLIGHT_SAMPLE_GLSL("fragNormal")
+
+		"	lighting = clamp(lighting, 0.0, 1.0);\n"
+		"	result *= lighting;\n"
+
 		"	if (UseOverbright)\n"
 		"		result.rgb *= 2.0;\n"
 		"	if (UseFullbrightTex)\n"
 		"		result += texture2D(FullbrightTex, v_TexCoord);\n"
-		"	result = clamp(result, 0.0, 1.0);\n"
-		"	vec3 fragNormal = (NormalMatrix * vec4(v_Normal, 1.0)).xyz;\n"
 
-		SHADOW_SAMPLE_GLSL("fragNormal")
+		"	result = clamp(result, 0.0, 1.0);\n"
 
 		FOG_CALC_GLSL
 
@@ -348,6 +360,9 @@ void GLAlias_CreateShaders (void)
 				uniform_name[strlen(uniform_name) - 2] = '0' + si;
 				glsl->shadow_map_samplers_loc[si] = GL_GetUniformLocation (&glsl->program, uniform_name);
 			}
+
+			glsl->dlight_data_block_index = GL_GetUniformBlockIndexFunc (glsl->program, "dlight_data");
+			GL_UniformBlockBindingFunc (glsl->program, glsl->dlight_data_block_index, DLIGHT_UBO_BINDING_POINT);
 
 			glsl->fog_data_block_index = GL_GetUniformBlockIndexFunc (glsl->program, "fog_data");
 			GL_UniformBlockBindingFunc (glsl->program, glsl->fog_data_block_index, FOG_UBO_BINDING_POINT);
@@ -1008,7 +1023,7 @@ void R_SetupAliasLighting (entity_t	*e)
 	vec3_t		dist;
 	float		add;
 	int			i;
-	int		quantizedangle;
+	int			quantizedangle;
 	float		radiansangle;
 	float		*origin;
 
@@ -1034,7 +1049,8 @@ void R_SetupAliasLighting (entity_t	*e)
 			R_LightPoint (lpos);
 		}
 
-		//add dlights
+#if 0
+		// add dlights
 		for (i=0 ; i<MAX_DLIGHTS ; i++)
 		{
 			if (cl_dlights[i].die >= cl.time)
@@ -1045,6 +1061,7 @@ void R_SetupAliasLighting (entity_t	*e)
 					VectorMA (lightcolor, add, cl_dlights[i].color, lightcolor);
 			}
 		}
+#endif
 
 		// minimum light value on gun (24)
 		if (e == &cl.viewent)

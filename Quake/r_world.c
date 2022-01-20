@@ -607,6 +607,7 @@ static struct
 	GLuint time;
 	GLuint view_projection_matrix;
 
+	GLuint dlight_data_block_index;
 	GLuint fog_data_block_index;
 	GLuint shadow_data_block_index;
 	GLuint shadow_map_samplers_loc[MAX_FRAME_SHADOWS];
@@ -694,6 +695,8 @@ static void GLWater_CreateShaders (void)
 		"uniform float Alpha;\n"
 		"uniform float WarpTime;\n"
 
+		DLIGHT_FRAG_UNIFORMS_GLSL
+
 		SHADOW_FRAG_UNIFORMS_GLSL
 
 		FOG_FRAG_UNIFORMS_GLSL
@@ -726,16 +729,26 @@ static void GLWater_CreateShaders (void)
 		"	ntc.s += 0.125 + sin(tc_tex.t*M_PI + TIMEBIAS)*0.125;\n"
 		"	ntc.t += 0.125 + sin(tc_tex.s*M_PI + TIMEBIAS)*0.125;\n"
 		"	vec4 result = texture2D(Tex, ntc.st);\n"
+		"	vec4 lighting = vec4(1.0);\n"
 "#ifdef LIT\n"
-		"	result *= texture2D(LMTex, tc_lm.xy);\n"
-		"	result.rgb *= LightScale;\n"
+		"	lighting = texture2D(LMTex, tc_lm.xy);\n"
+		"	lighting.rgb *= LightScale;\n"
 "#endif\n"
-		"	result.a *= Alpha;\n"
-		"	result = clamp(result, 0.0, 1.0);\n"
 
 		SHADOW_SAMPLE_GLSL("v_Normal")
 
+		"\n"
+
+		DLIGHT_SAMPLE_WATER_GLSL
+
+		"\n"
+
 		FOG_CALC_GLSL
+
+		"	lighting = clamp(lighting, 0.0, 1.0);\n"
+
+		"	result.a *= Alpha;\n"
+		"	result = clamp(result*lighting, 0.0, 1.0);\n"
 
 		"	outColor = result;\n"
 		"}\n";
@@ -771,6 +784,9 @@ static void GLWater_CreateShaders (void)
 				uniform_name[strlen(uniform_name) - 2] = '0' + si;
 				r_water[i].shadow_map_samplers_loc[si] = GL_GetUniformLocation (&r_water[i].program, uniform_name);
 			}
+
+			r_water[i].dlight_data_block_index = GL_GetUniformBlockIndexFunc (r_water[i].program, "dlight_data");
+			GL_UniformBlockBindingFunc (r_water[i].program, r_water[i].dlight_data_block_index, DLIGHT_UBO_BINDING_POINT);
 
 			r_water[i].fog_data_block_index = GL_GetUniformBlockIndexFunc (r_water[i].program, "fog_data");
 			GL_UniformBlockBindingFunc (r_water[i].program, r_water[i].fog_data_block_index, FOG_UBO_BINDING_POINT);

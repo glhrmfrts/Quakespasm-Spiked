@@ -21,4 +21,15 @@
 "	light_factor *= 1.0 - clamp(length(light_dist) / lights[i].radius, 0.0, 1.0);\n" \
 "	light_factor = clamp(light_factor, 0.0, 1.0);\n" \
 "	lighting.xyz += lights[i].color.xyz * light_factor;\n" \
-"}\n" \
+"}\n"
+
+#define DLIGHT_SAMPLE_WATER_GLSL \
+"float lightshift = 128.0;\n" \
+"if (num_lights==0) {  }\n" \
+"for (int i = 0; i < num_lights; i++) {\n" \
+"	vec3 light_dist = WorldCoord - lights[i].position.xyz;\n" \
+"	float light_factor = 1.0;\n" \
+"	light_factor *= 1.0 - clamp(length(light_dist) / lights[i].radius, 0.0, 1.0);\n" \
+"	light_factor = clamp(light_factor, 0.0, 1.0);\n" \
+"	lighting.xyz += lights[i].color.xyz * light_factor;\n" \
+"}\n"

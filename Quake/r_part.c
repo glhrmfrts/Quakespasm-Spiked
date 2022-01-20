@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 */
 
 #include "quakedef.h"
+#include "gl_fog.h"
 
 #define MAX_PARTICLES			2048	// default max # of particles at one
 										//  time
@@ -117,6 +118,86 @@ void R_InitParticleTextures (void)
 	texturescalefactor = 1.27;
 }
 
+typedef struct {
+	vec3_t pos;
+	float u,v;
+	vec4_t color;
+} r_part_vertex_t;
+
+static GLuint part_program;
+static GLuint part_vbo;
+static GLuint u_view_projection_matrix;
+static GLuint u_particle_texture;
+static GLuint fog_data_block_index;
+
+static r_part_vertex_t part_verts[MAX_PARTICLES*6];
+
+static void R_InitParticleShaders ()
+{
+	const char* vert_source = ""
+	"#version 330 core\n"
+	""
+	"layout (location = 0) in vec3 a_pos;\n"
+	"layout (location = 1) in vec2 a_tex_coord;\n"
+	"layout (location = 2) in vec4 a_color;\n"
+	"\n"
+	"uniform mat4 u_view_projection_matrix;\n"
+	"\n"
+	"out float FogFragCoord;\n"
+	"out vec2 v_tex_coord;\n"
+	"out vec4 v_color;\n"
+	"\n"
+	"void main() {\n"
+	"	gl_Position = u_view_projection_matrix * vec4(a_pos, 1.0);\n"
+	"	FogFragCoord = gl_Position.w;\n"
+	"	v_tex_coord = a_tex_coord;\n"
+	"	v_color = a_color;\n"
+	"}\n";
+
+	const char* frag_source = ""
+	"#version 330 core\n"
+	""
+	"\n"
+	"uniform sampler2D u_particle_texture;\n"
+
+	FOG_FRAG_UNIFORMS_GLSL
+
+	"\n"
+	"in float FogFragCoord;\n"
+	"in vec2 v_tex_coord;\n"
+	"in vec4 v_color;\n"
+	"\n"
+	"out vec4 out_color;\n"
+	"\n"
+	"void main() {\n"
+	"	vec4 tex_color = texture(u_particle_texture, v_tex_coord);\n"
+	"	vec4 result = tex_color * v_color;\n"
+
+		FOG_CALC_GLSL
+
+	"	out_color = result;\n"
+	"}\n";
+
+	gl_shader_t sh = {0};
+	GL_CreateShaderFromVF (&sh, vert_source, frag_source, 0, NULL);
+	part_program = sh.program_id;
+	if (part_program != 0) {
+		u_view_projection_matrix = GL_GetUniformLocation (&part_program, "u_view_projection_matrix");
+		u_particle_texture = GL_GetUniformLocation (&part_program, "u_particle_texture");
+
+		fog_data_block_index = GL_GetUniformBlockIndexFunc (part_program, "fog_data");
+		GL_UniformBlockBindingFunc (part_program, fog_data_block_index, FOG_UBO_BINDING_POINT);
+	}
+}
+
+static void R_InitParticleVBO ()
+{
+	GL_GenBuffersFunc (1, &part_vbo);
+	GL_BindBufferFunc (GL_ARRAY_BUFFER, part_vbo);
+	GL_BufferDataFunc (GL_ARRAY_BUFFER, sizeof(part_verts), &part_verts, GL_DYNAMIC_DRAW);
+	GL_BindBufferFunc (GL_ARRAY_BUFFER, 0);
+}
+
 /*
 ===============
 R_SetParticleTexture_f -- johnfitz
@@ -171,6 +252,10 @@ void R_InitParticles (void)
 	Cvar_RegisterVariable (&r_quadparticles); //johnfitz
 
 	R_InitParticleTextures (); //johnfitz
+
+	R_InitParticleShaders ();
+
+	R_InitParticleVBO ();
 }
 
 /*
@@ -838,10 +923,15 @@ void R_DrawParticles (void)
 {
 	particle_t		*p;
 	float			scale;
-	vec3_t			up, right, p_up, p_right, p_upright; //johnfitz -- p_ vectors
+	vec3_t			up, right, left, down;
+	vec3_t			v0, v1, v2, v3;
+	vec3_t			p_v0, p_v1, p_v2, p_v3;
+
 	GLubyte			color[4], *c; //johnfitz -- particle transparency
 	extern	cvar_t	r_particles; //johnfitz
 	//float			alpha; //johnfitz -- particle transparency
+
+	extern mat4_t r_projection_view_matrix;
 
 	if (!r_particles.value)
 		return;
@@ -850,10 +940,137 @@ void R_DrawParticles (void)
 	if (!active_particles)
 		return;
 
-	VectorScale (vup, 1.5, up);
-	VectorScale (vright, 1.5, right);
+	VectorScale (vup, 1.0, up);
+	VectorScale (vright, 1.0, right);
 
-	GL_Bind(particletexture);
+	VectorCopy (up, down);
+	VectorInverse (down);
+
+	VectorCopy (right, left);
+	VectorInverse (left);
+
+	// gnemeth -- using vbo for particles
+
+	GL_UseProgramFunc (part_program);
+
+	GL_Uniform1iFunc (u_particle_texture, 0);
+	GL_UniformMatrix4fvFunc (u_view_projection_matrix, 1, false, (const GLfloat*)r_projection_view_matrix);
+
+	GL_SelectTexture (GL_TEXTURE0);
+	GL_Bind (particletexture);
+
+	size_t num_particles = 0;
+	size_t vi = 0;
+
+	for (p=active_particles ; p ; p=p->next) {
+		// hack a scale up to keep particles from disapearing
+		scale = (p->org[0] - r_origin[0]) * vpn[0]
+				+ (p->org[1] - r_origin[1]) * vpn[1]
+				+ (p->org[2] - r_origin[2]) * vpn[2];
+		if (scale < 20)
+			scale = 1 + 0.08; //johnfitz -- added .08 to be consistent
+		else
+			scale = 1 + scale * 0.004;
+
+		scale /= 2.0; //quad is half the size of triangle
+
+		scale *= texturescalefactor; //johnfitz -- compensate for apparent size of different particle textures
+
+		//johnfitz -- particle transparency and fade out
+		c = (GLubyte *) &d_8to24table[(int)p->color];
+
+		VectorAdd (down, left, v0);
+		VectorAdd (up, left, v1);
+		VectorAdd (down, right, v2);
+		VectorAdd (up, right, v3);
+
+		VectorMA (p->org, scale, v0, p_v0);
+		VectorMA (p->org, scale, v1, p_v1);
+		VectorMA (p->org, scale, v2, p_v2);
+		VectorMA (p->org, scale, v3, p_v3);
+
+		// 0
+		VectorCopy (p_v0, part_verts[vi].pos);
+		part_verts[vi].u = 0;
+		part_verts[vi].v = 0;
+		part_verts[vi].color[0] = (float)c[0] / 255.0f;
+		part_verts[vi].color[1] = (float)c[1] / 255.0f;
+		part_verts[vi].color[2] = (float)c[2] / 255.0f;
+		//alpha = CLAMP(0, p->die + 0.5 - cl.time, 1);
+		part_verts[vi].color[3] = 255.0f; //(int)(alpha * 255);
+		vi++;
+
+		// 1
+		VectorCopy (p_v1, part_verts[vi].pos);
+		part_verts[vi].u = 0;
+		part_verts[vi].v = 1;
+		part_verts[vi].color[0] = (float)c[0] / 255.0f;
+		part_verts[vi].color[1] = (float)c[1] / 255.0f;
+		part_verts[vi].color[2] = (float)c[2] / 255.0f;
+		//alpha = CLAMP(0, p->die + 0.5 - cl.time, 1);
+		part_verts[vi].color[3] = 255.0f; //(int)(alpha * 255);
+		vi++;
+
+		// 2
+		VectorCopy (p_v2, part_verts[vi].pos);
+		part_verts[vi].u = 1;
+		part_verts[vi].v = 0;
+		part_verts[vi].color[0] = (float)c[0] / 255.0f;
+		part_verts[vi].color[1] = (float)c[1] / 255.0f;
+		part_verts[vi].color[2] = (float)c[2] / 255.0f;
+		//alpha = CLAMP(0, p->die + 0.5 - cl.time, 1);
+		part_verts[vi].color[3] = 255.0f; //(int)(alpha * 255);
+		vi++;
+
+		// 2
+		VectorCopy (p_v2, part_verts[vi].pos);
+		part_verts[vi].u = 1;
+		part_verts[vi].v = 0;
+		part_verts[vi].color[0] = (float)c[0] / 255.0f;
+		part_verts[vi].color[1] = (float)c[1] / 255.0f;
+		part_verts[vi].color[2] = (float)c[2] / 255.0f;
+		//alpha = CLAMP(0, p->die + 0.5 - cl.time, 1);
+		part_verts[vi].color[3] = 255.0f; //(int)(alpha * 255);
+		vi++;
+
+		// 1
+		VectorCopy (p_v1, part_verts[vi].pos);
+		part_verts[vi].u = 0;
+		part_verts[vi].v = 1;
+		part_verts[vi].color[0] = (float)c[0] / 255.0f;
+		part_verts[vi].color[1] = (float)c[1] / 255.0f;
+		part_verts[vi].color[2] = (float)c[2] / 255.0f;
+		//alpha = CLAMP(0, p->die + 0.5 - cl.time, 1);
+		part_verts[vi].color[3] = 255.0f; //(int)(alpha * 255);
+		vi++;
+
+		// 3
+		VectorCopy (p_v3, part_verts[vi].pos);
+		part_verts[vi].u = 1;
+		part_verts[vi].v = 1;
+		part_verts[vi].color[0] = (float)c[0] / 255.0f;
+		part_verts[vi].color[1] = (float)c[1] / 255.0f;
+		part_verts[vi].color[2] = (float)c[2] / 255.0f;
+		//alpha = CLAMP(0, p->die + 0.5 - cl.time, 1);
+		part_verts[vi].color[3] = 255.0f; //(int)(alpha * 255);
+		vi++;
+
+		num_particles++;
+	}
+
+	GL_BindBufferFunc (GL_ARRAY_BUFFER, part_vbo);
+	GL_BufferSubDataFunc (GL_ARRAY_BUFFER, 0, num_particles * sizeof(r_part_vertex_t) * 6, part_verts);
+
+	GL_EnableVertexAttribArrayFunc (0);
+	GL_EnableVertexAttribArrayFunc (1);
+	GL_EnableVertexAttribArrayFunc (2);
+	GL_VertexAttribPointerFunc (0, 3, GL_FLOAT, false, sizeof(r_part_vertex_t), NULL);
+	GL_VertexAttribPointerFunc (1, 2, GL_FLOAT, false, sizeof(r_part_vertex_t), ((float*)NULL) + 3);
+	GL_VertexAttribPointerFunc (2, 4, GL_FLOAT, false, sizeof(r_part_vertex_t), ((float*)NULL) + 5);
+
+	glDrawArrays (GL_TRIANGLES, 0, num_particles * 6);
+
+#if 0
 	glEnable (GL_BLEND);
 	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 	glDepthMask (GL_FALSE); //johnfitz -- fix for particle z-buffer bug
@@ -951,6 +1168,7 @@ void R_DrawParticles (void)
 	glDisable (GL_BLEND);
 	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
 	glColor3f(1,1,1);
+#endif
 }
 
 

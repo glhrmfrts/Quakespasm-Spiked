@@ -74,6 +74,8 @@ mspriteframe_t *R_GetSpriteFrame (entity_t *currentent)
 	return pspriteframe;
 }
 
+// TODO(gnemeth): rewrite this to use VBO and batching
+
 /*
 =================
 R_DrawSpriteModel -- johnfitz -- rewritten: now supports all orientations
