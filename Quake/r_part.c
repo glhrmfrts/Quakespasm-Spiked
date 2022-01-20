@@ -24,7 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "gl_fog.h"
 
-#define MAX_PARTICLES			(0xFFFF)	// default max # of particles at one
+#define MAX_PARTICLES			(100*1024)	// default max # of particles at one
 											//  time
 #define ABSOLUTE_MIN_PARTICLES	512			// no fewer than this no matter what's
 											//  on the command line
@@ -120,39 +120,91 @@ void R_InitParticleTextures (void)
 
 typedef struct {
 	vec3_t pos;
-	float u,v;
+	float scale;
 	vec4_t color;
 } r_part_vertex_t;
 
 static GLuint part_program;
 static GLuint part_vbo;
+static GLuint u_up;
+static GLuint u_right;
 static GLuint u_view_projection_matrix;
 static GLuint u_particle_texture;
 static GLuint fog_data_block_index;
 
-static r_part_vertex_t part_verts[MAX_PARTICLES*6];
+static r_part_vertex_t part_verts[MAX_PARTICLES];
 
 static void R_InitParticleShaders ()
 {
 	const char* vert_source = ""
 	"#version 330 core\n"
-	""
-	"layout (location = 0) in vec3 a_pos;\n"
-	"layout (location = 1) in vec2 a_tex_coord;\n"
-	"layout (location = 2) in vec4 a_color;\n"
 	"\n"
+	"layout (location = 0) in vec4 a_pos;\n"
+	"layout (location = 1) in vec4 a_color;\n"
+	"\n"
+	
+	"\n"
+	"out VS_OUT { vec4 color; } vs_out;\n"
+	"\n"
+	"void main() {\n"
+	"	gl_Position = a_pos;\n"
+	"	vs_out.color = a_color;\n"
+	"}\n";
+
+	const char* geom_source = ""
+	"#version 330 core\n"
+	"\n"
+	"layout (points) in;\n"
+	"layout (triangle_strip, max_vertices=4) out;\n"
+	"\n"
+	"uniform vec3 u_up;\n"
+	"uniform vec3 u_right;\n"
 	"uniform mat4 u_view_projection_matrix;\n"
+	"\n"
+	"in VS_OUT { vec4 color; } gs_in[];\n"
 	"\n"
 	"out float FogFragCoord;\n"
 	"out vec2 v_tex_coord;\n"
 	"out vec4 v_color;\n"
+
 	"\n"
 	"void main() {\n"
-	"	gl_Position = u_view_projection_matrix * vec4(a_pos, 1.0);\n"
+	"	vec3 down = -u_up;\n"
+	"	vec3 left = -u_right;\n"
+	"	vec3 v0 = left+down;\n"
+	"	vec3 v1 = left+u_up;\n"
+	"	vec3 v2 = u_right+u_up;\n"
+	"	vec3 v3 = u_right+down;\n"
+
+	"	float scale = gl_in[0].gl_Position.w;\n"
+
+	"	gl_Position = u_view_projection_matrix * vec4(gl_in[0].gl_Position.xyz + scale*v0, 1.0);\n"
 	"	FogFragCoord = gl_Position.w;\n"
-	"	v_tex_coord = a_tex_coord;\n"
-	"	v_color = a_color;\n"
-	"}\n";
+	"	v_tex_coord = vec2(0,0);\n"
+	"	v_color = gs_in[0].color;\n"
+	"	EmitVertex();\n"
+
+	"	gl_Position = u_view_projection_matrix * vec4(gl_in[0].gl_Position.xyz + scale*v1, 1.0);\n"
+	"	FogFragCoord = gl_Position.w;\n"
+	"	v_tex_coord = vec2(0,1);\n"
+	"	v_color = gs_in[0].color;\n"
+	"	EmitVertex();\n"
+
+	"	gl_Position = u_view_projection_matrix * vec4(gl_in[0].gl_Position.xyz + scale*v3, 1.0);\n"
+	"	FogFragCoord = gl_Position.w;\n"
+	"	v_tex_coord = vec2(1,0);\n"
+	"	v_color = gs_in[0].color;\n"
+	"	EmitVertex();\n"
+
+	"	gl_Position = u_view_projection_matrix * vec4(gl_in[0].gl_Position.xyz + scale*v2, 1.0);\n"
+	"	FogFragCoord = gl_Position.w;\n"
+	"	v_tex_coord = vec2(1,1);\n"
+	"	v_color = gs_in[0].color;\n"
+	"	EmitVertex();\n"
+
+	"	EndPrimitive();\n"
+	"}\n"
+	"";
 
 	const char* frag_source = ""
 	"#version 330 core\n"
@@ -179,11 +231,13 @@ static void R_InitParticleShaders ()
 	"}\n";
 
 	gl_shader_t sh = {0};
-	GL_CreateShaderFromVF (&sh, vert_source, frag_source, 0, NULL);
+	GL_CreateShaderFromVGF (&sh, vert_source, geom_source, frag_source, 0, NULL);
 	part_program = sh.program_id;
 	if (part_program != 0) {
 		u_view_projection_matrix = GL_GetUniformLocation (&part_program, "u_view_projection_matrix");
 		u_particle_texture = GL_GetUniformLocation (&part_program, "u_particle_texture");
+		u_up = GL_GetUniformLocation (&part_program, "u_up");
+		u_right = GL_GetUniformLocation (&part_program, "u_right");
 
 		fog_data_block_index = GL_GetUniformBlockIndexFunc (part_program, "fog_data");
 		GL_UniformBlockBindingFunc (part_program, fog_data_block_index, FOG_UBO_BINDING_POINT);
@@ -829,24 +883,6 @@ void CL_RunParticles (void)
 	grav = frametime * sv_gravity.value * 0.05;
 	dvel = 4*frametime;
 
-	vec3_t up, down, left, right;
-	vec3_t v0, v1, v2, v3;
-	vec3_t p_v0, p_v1, p_v2, p_v3;
-
-	VectorScale(vup, 1.25, up);
-	VectorScale(vright, 1.25, right);
-
-	VectorCopy(up, down);
-	VectorInverse(down);
-
-	VectorCopy(right, left);
-	VectorInverse(left);
-
-	VectorAdd(down, left, v0);
-	VectorAdd(up, left, v1);
-	VectorAdd(down, right, v2);
-	VectorAdd(up, right, v3);
-
 	for ( ;; )
 	{
 		kill = active_particles;
@@ -952,60 +988,13 @@ void CL_RunParticles (void)
 		//johnfitz -- particle transparency and fade out
 		const GLubyte* c = (GLubyte*)&d_8to24table[(int)p->color];
 		const float alpha = CLAMP(0, p->die + 0.5 - cl.time, 1);
-		const float fc[] = { (float)c[0]/255.0f, (float)c[1]/255.0f, (float)c[2]/255.0f, alpha };
-
-		VectorMA(p->org, scale, v0, p_v0);
-		VectorMA(p->org, scale, v1, p_v1);
-		VectorMA(p->org, scale, v2, p_v2);
-		VectorMA(p->org, scale, v3, p_v3);
-
-		// 0
-		VectorCopy(p_v0, part_verts[vi].pos);
-		part_verts[vi].u = 0;
-		part_verts[vi].v = 0;
-		part_verts[vi].color[0] = fc[0];
-		part_verts[vi].color[1] = fc[1];
-		part_verts[vi].color[2] = fc[2];
-		part_verts[vi].color[3] = fc[3];
-		vi++;
-
-		// 1
-		VectorCopy(p_v1, part_verts[vi].pos);
-		part_verts[vi].u = 0;
-		part_verts[vi].v = 1;
-		part_verts[vi].color[0] = fc[0];
-		part_verts[vi].color[1] = fc[1];
-		part_verts[vi].color[2] = fc[2];
-		part_verts[vi].color[3] = fc[3];
-		vi++;
-
-		// 2
-		VectorCopy(p_v2, part_verts[vi].pos);
-		part_verts[vi].u = 1;
-		part_verts[vi].v = 0;
-		part_verts[vi].color[0] = fc[0];
-		part_verts[vi].color[1] = fc[1];
-		part_verts[vi].color[2] = fc[2];
-		part_verts[vi].color[3] = fc[3];
-		vi++;
-
-		// 2
-		part_verts[vi] = part_verts[vi-1];
-		vi++;
-
-		// 1
-		part_verts[vi] = part_verts[vi-3];
-		vi++;
-
-		// 3
-		VectorCopy(p_v3, part_verts[vi].pos);
-		part_verts[vi].u = 1;
-		part_verts[vi].v = 1;
-		part_verts[vi].color[0] = fc[0];
-		part_verts[vi].color[1] = fc[1];
-		part_verts[vi].color[2] = fc[2];
-		part_verts[vi].color[3] = fc[3];
-		vi++;
+		
+		VectorCopy(p->org, part_verts[num_particles].pos);
+		part_verts[num_particles].scale = scale;
+		part_verts[num_particles].color[0] = (float)c[0]/255.0f;
+		part_verts[num_particles].color[1] = (float)c[1]/255.0f;
+		part_verts[num_particles].color[2] = (float)c[2]/255.0f;
+		part_verts[num_particles].color[3] = alpha;
 #endif
 		num_particles++;
 	}
@@ -1045,27 +1034,30 @@ void R_DrawParticles (void)
 
 #if 1
 #if 1
+	VectorScale(vup, 1.25, up);
+	VectorScale(vright, 1.25, right);
+
 	glEnable (GL_BLEND);
 
 	GL_UseProgramFunc (part_program);
 
 	GL_Uniform1iFunc (u_particle_texture, 0);
+	GL_Uniform3fFunc (u_up, up[0], up[1], up[2]);
+	GL_Uniform3fFunc (u_right, right[0], right[1], right[2]);
 	GL_UniformMatrix4fvFunc (u_view_projection_matrix, 1, false, (const GLfloat*)r_projection_view_matrix);
 
 	GL_SelectTexture (GL_TEXTURE0);
 	GL_Bind (particletexture);
 
 	GL_BindBufferFunc (GL_ARRAY_BUFFER, part_vbo);
-	GL_BufferSubDataFunc (GL_ARRAY_BUFFER, 0, frame_particles * sizeof(r_part_vertex_t) * 6, part_verts);
+	GL_BufferSubDataFunc (GL_ARRAY_BUFFER, 0, frame_particles * sizeof(r_part_vertex_t), part_verts);
 
 	GL_EnableVertexAttribArrayFunc (0);
 	GL_EnableVertexAttribArrayFunc (1);
-	GL_EnableVertexAttribArrayFunc (2);
-	GL_VertexAttribPointerFunc (0, 3, GL_FLOAT, false, sizeof(r_part_vertex_t), NULL);
-	GL_VertexAttribPointerFunc (1, 2, GL_FLOAT, false, sizeof(r_part_vertex_t), ((float*)NULL) + 3);
-	GL_VertexAttribPointerFunc (2, 4, GL_FLOAT, false, sizeof(r_part_vertex_t), ((float*)NULL) + 5);
+	GL_VertexAttribPointerFunc (0, 4, GL_FLOAT, false, sizeof(r_part_vertex_t), NULL);
+	GL_VertexAttribPointerFunc (1, 4, GL_FLOAT, false, sizeof(r_part_vertex_t), ((float*)NULL) + 4);
 
-	glDrawArrays (GL_TRIANGLES, 0, frame_particles * 6);
+	glDrawArrays (GL_POINTS, 0, frame_particles);
 	glDisable (GL_BLEND);
 
 	GL_BindBufferFunc (GL_ARRAY_BUFFER, 0);

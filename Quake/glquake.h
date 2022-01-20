@@ -402,6 +402,11 @@ qboolean GL_CreateShaderFromVF(
 	int numbindings, const glsl_attrib_binding_t *bindings
 );
 
+qboolean GL_CreateShaderFromVGF(
+	gl_shader_t* sh, const char* vert_source, const char* geom_source, const char* frag_source,
+	int numbindings, const glsl_attrib_binding_t *bindings
+);
+
 void GL_DestroyShader(gl_shader_t* sh);
 
 //johnfitz -- polygon offset

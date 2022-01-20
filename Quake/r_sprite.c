@@ -74,7 +74,7 @@ mspriteframe_t *R_GetSpriteFrame (entity_t *currentent)
 	return pspriteframe;
 }
 
-// TODO(gnemeth): rewrite this to use VBO and batching
+// TODO(gnemeth): rewrite this to use VBO, GS and batching
 
 /*
 =================

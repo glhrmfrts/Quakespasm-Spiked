@@ -61,12 +61,12 @@ static qboolean link_shader_program(
 	return (Status == GL_TRUE);
 }
 
-static qboolean compile_shader(gl_shader_t* sh, const char* vert_source, const char* frag_source, int numbindings, const glsl_attrib_binding_t *bindings) {
+static qboolean compile_shader(gl_shader_t* sh, const char* vert_source, const char* geom_source, const char* frag_source, int numbindings, const glsl_attrib_binding_t *bindings) {
 	if (!sh->program_id) {
 		sh->program_id = GL_CreateProgramFunc();
 		sh->vertex_shader = GL_CreateShaderFunc(GL_VERTEX_SHADER);
 		sh->fragment_shader = GL_CreateShaderFunc(GL_FRAGMENT_SHADER);
-		if (false) {
+		if (geom_source) {
 			sh->geometry_shader = GL_CreateShaderFunc(GL_GEOMETRY_SHADER);
 		}
 	}
@@ -74,10 +74,9 @@ static qboolean compile_shader(gl_shader_t* sh, const char* vert_source, const c
 	qboolean compiled = compile_shader_stage(sh->vertex_shader, vert_source);
 	compiled = compile_shader_stage(sh->fragment_shader, frag_source);
 
-	//if (false) {
-		//std::string geometrySource = includeStr + "\n#define GEOMETRY_SHADER\n" + source;
-		//compiled = compile_shader_stage(sh->geometry_shader, geometrySource.c_str());
-	//}
+	if (geom_source) {
+		compiled = compile_shader_stage(sh->geometry_shader, geom_source);
+	}
 
 	if (compiled) {
 		link_shader_program(
@@ -92,7 +91,14 @@ qboolean GL_CreateShaderFromVF(
 	gl_shader_t* sh, const char* vert_source, const char* frag_source,
 	int numbindings, const glsl_attrib_binding_t *bindings
 ) {
-	return compile_shader (sh, vert_source, frag_source, numbindings, bindings);
+	return compile_shader (sh, vert_source, NULL, frag_source, numbindings, bindings);
+}
+
+qboolean GL_CreateShaderFromVGF(
+	gl_shader_t* sh, const char* vert_source, const char* geom_source, const char* frag_source,
+	int numbindings, const glsl_attrib_binding_t *bindings
+) {
+	return compile_shader (sh, vert_source, geom_source, frag_source, numbindings, bindings);
 }
 
 void GL_DestroyShader(gl_shader_t* sh) {
