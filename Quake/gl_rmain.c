@@ -1178,6 +1178,7 @@ void R_RenderView (void)
 		lightmaps_latecached=false;
 	}
 
+	CL_RunParticles ();
 
 	//Spike -- quickly draw the world from the skyroom camera's point of view.
 	skyroom_drawn = false;

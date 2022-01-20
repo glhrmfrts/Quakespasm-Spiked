@@ -24,10 +24,10 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "gl_fog.h"
 
-#define MAX_PARTICLES			2048	// default max # of particles at one
-										//  time
-#define ABSOLUTE_MIN_PARTICLES	512		// no fewer than this no matter what's
-										//  on the command line
+#define MAX_PARTICLES			(0xFFFF)	// default max # of particles at one
+											//  time
+#define ABSOLUTE_MIN_PARTICLES	512			// no fewer than this no matter what's
+											//  on the command line
 
 int		ramp1[8] = {0x6f, 0x6d, 0x6b, 0x69, 0x67, 0x65, 0x63, 0x61};
 int		ramp2[8] = {0x6f, 0x6e, 0x6d, 0x6c, 0x6b, 0x6a, 0x68, 0x66};
@@ -449,7 +449,7 @@ void R_ParticleExplosion (vec3_t org)
 	int			i, j;
 	particle_t	*p;
 
-	for (i=0 ; i<1024 ; i++)
+	for (i=0 ; i<2048 ; i++)
 	{
 		if (!free_particles)
 			return;
@@ -467,7 +467,7 @@ void R_ParticleExplosion (vec3_t org)
 			for (j=0 ; j<3 ; j++)
 			{
 				p->org[j] = org[j] + ((rand()%32)-16);
-				p->vel[j] = (rand()%512)-256;
+				p->vel[j] = (rand()%1024)-512;
 			}
 		}
 		else
@@ -476,7 +476,7 @@ void R_ParticleExplosion (vec3_t org)
 			for (j=0 ; j<3 ; j++)
 			{
 				p->org[j] = org[j] + ((rand()%32)-16);
-				p->vel[j] = (rand()%512)-256;
+				p->vel[j] = (rand()%1024)-512;
 			}
 		}
 	}
@@ -808,6 +808,8 @@ void R_RocketTrail (vec3_t start, vec3_t end, int type)
 	}
 }
 
+static size_t frame_particles;
+
 /*
 ===============
 CL_RunParticles -- johnfitz -- all the particle behavior, separated from R_DrawParticles
@@ -827,6 +829,24 @@ void CL_RunParticles (void)
 	grav = frametime * sv_gravity.value * 0.05;
 	dvel = 4*frametime;
 
+	vec3_t up, down, left, right;
+	vec3_t v0, v1, v2, v3;
+	vec3_t p_v0, p_v1, p_v2, p_v3;
+
+	VectorScale(vup, 1.25, up);
+	VectorScale(vright, 1.25, right);
+
+	VectorCopy(up, down);
+	VectorInverse(down);
+
+	VectorCopy(right, left);
+	VectorInverse(left);
+
+	VectorAdd(down, left, v0);
+	VectorAdd(up, left, v1);
+	VectorAdd(down, right, v2);
+	VectorAdd(up, right, v3);
+
 	for ( ;; )
 	{
 		kill = active_particles;
@@ -839,6 +859,9 @@ void CL_RunParticles (void)
 		}
 		break;
 	}
+
+	size_t vi = 0;
+	size_t num_particles = 0;
 
 	for (p=active_particles ; p ; p=p->next)
 	{
@@ -911,7 +934,85 @@ void CL_RunParticles (void)
 			p->vel[2] -= grav;
 			break;
 		}
+
+#if 1
+		// hack a scale up to keep particles from disapearing
+		float scale = (p->org[0] - r_origin[0]) * vpn[0]
+			+ (p->org[1] - r_origin[1]) * vpn[1]
+			+ (p->org[2] - r_origin[2]) * vpn[2];
+		if (scale < 20)
+			scale = 1 + 0.08; //johnfitz -- added .08 to be consistent
+		else
+			scale = 1 + scale * 0.004;
+
+		scale /= 2.0; //quad is half the size of triangle
+
+		scale *= texturescalefactor; //johnfitz -- compensate for apparent size of different particle textures
+
+		//johnfitz -- particle transparency and fade out
+		const GLubyte* c = (GLubyte*)&d_8to24table[(int)p->color];
+		const float alpha = CLAMP(0, p->die + 0.5 - cl.time, 1);
+		const float fc[] = { (float)c[0]/255.0f, (float)c[1]/255.0f, (float)c[2]/255.0f, alpha };
+
+		VectorMA(p->org, scale, v0, p_v0);
+		VectorMA(p->org, scale, v1, p_v1);
+		VectorMA(p->org, scale, v2, p_v2);
+		VectorMA(p->org, scale, v3, p_v3);
+
+		// 0
+		VectorCopy(p_v0, part_verts[vi].pos);
+		part_verts[vi].u = 0;
+		part_verts[vi].v = 0;
+		part_verts[vi].color[0] = fc[0];
+		part_verts[vi].color[1] = fc[1];
+		part_verts[vi].color[2] = fc[2];
+		part_verts[vi].color[3] = fc[3];
+		vi++;
+
+		// 1
+		VectorCopy(p_v1, part_verts[vi].pos);
+		part_verts[vi].u = 0;
+		part_verts[vi].v = 1;
+		part_verts[vi].color[0] = fc[0];
+		part_verts[vi].color[1] = fc[1];
+		part_verts[vi].color[2] = fc[2];
+		part_verts[vi].color[3] = fc[3];
+		vi++;
+
+		// 2
+		VectorCopy(p_v2, part_verts[vi].pos);
+		part_verts[vi].u = 1;
+		part_verts[vi].v = 0;
+		part_verts[vi].color[0] = fc[0];
+		part_verts[vi].color[1] = fc[1];
+		part_verts[vi].color[2] = fc[2];
+		part_verts[vi].color[3] = fc[3];
+		vi++;
+
+		// 2
+		part_verts[vi] = part_verts[vi-1];
+		vi++;
+
+		// 1
+		part_verts[vi] = part_verts[vi-3];
+		vi++;
+
+		// 3
+		VectorCopy(p_v3, part_verts[vi].pos);
+		part_verts[vi].u = 1;
+		part_verts[vi].v = 1;
+		part_verts[vi].color[0] = fc[0];
+		part_verts[vi].color[1] = fc[1];
+		part_verts[vi].color[2] = fc[2];
+		part_verts[vi].color[3] = fc[3];
+		vi++;
+#endif
+		num_particles++;
 	}
+
+	Con_Printf("num_particles: %d\n", (int)num_particles);
+
+	frame_particles = num_particles;
 }
 
 /*
@@ -940,16 +1041,11 @@ void R_DrawParticles (void)
 	if (!active_particles)
 		return;
 
-	VectorScale (vup, 1.0, up);
-	VectorScale (vright, 1.0, right);
-
-	VectorCopy (up, down);
-	VectorInverse (down);
-
-	VectorCopy (right, left);
-	VectorInverse (left);
-
 	// gnemeth -- using vbo for particles
+
+#if 1
+#if 1
+	glEnable (GL_BLEND);
 
 	GL_UseProgramFunc (part_program);
 
@@ -959,107 +1055,8 @@ void R_DrawParticles (void)
 	GL_SelectTexture (GL_TEXTURE0);
 	GL_Bind (particletexture);
 
-	size_t num_particles = 0;
-	size_t vi = 0;
-
-	for (p=active_particles ; p ; p=p->next) {
-		// hack a scale up to keep particles from disapearing
-		scale = (p->org[0] - r_origin[0]) * vpn[0]
-				+ (p->org[1] - r_origin[1]) * vpn[1]
-				+ (p->org[2] - r_origin[2]) * vpn[2];
-		if (scale < 20)
-			scale = 1 + 0.08; //johnfitz -- added .08 to be consistent
-		else
-			scale = 1 + scale * 0.004;
-
-		scale /= 2.0; //quad is half the size of triangle
-
-		scale *= texturescalefactor; //johnfitz -- compensate for apparent size of different particle textures
-
-		//johnfitz -- particle transparency and fade out
-		c = (GLubyte *) &d_8to24table[(int)p->color];
-
-		VectorAdd (down, left, v0);
-		VectorAdd (up, left, v1);
-		VectorAdd (down, right, v2);
-		VectorAdd (up, right, v3);
-
-		VectorMA (p->org, scale, v0, p_v0);
-		VectorMA (p->org, scale, v1, p_v1);
-		VectorMA (p->org, scale, v2, p_v2);
-		VectorMA (p->org, scale, v3, p_v3);
-
-		// 0
-		VectorCopy (p_v0, part_verts[vi].pos);
-		part_verts[vi].u = 0;
-		part_verts[vi].v = 0;
-		part_verts[vi].color[0] = (float)c[0] / 255.0f;
-		part_verts[vi].color[1] = (float)c[1] / 255.0f;
-		part_verts[vi].color[2] = (float)c[2] / 255.0f;
-		//alpha = CLAMP(0, p->die + 0.5 - cl.time, 1);
-		part_verts[vi].color[3] = 255.0f; //(int)(alpha * 255);
-		vi++;
-
-		// 1
-		VectorCopy (p_v1, part_verts[vi].pos);
-		part_verts[vi].u = 0;
-		part_verts[vi].v = 1;
-		part_verts[vi].color[0] = (float)c[0] / 255.0f;
-		part_verts[vi].color[1] = (float)c[1] / 255.0f;
-		part_verts[vi].color[2] = (float)c[2] / 255.0f;
-		//alpha = CLAMP(0, p->die + 0.5 - cl.time, 1);
-		part_verts[vi].color[3] = 255.0f; //(int)(alpha * 255);
-		vi++;
-
-		// 2
-		VectorCopy (p_v2, part_verts[vi].pos);
-		part_verts[vi].u = 1;
-		part_verts[vi].v = 0;
-		part_verts[vi].color[0] = (float)c[0] / 255.0f;
-		part_verts[vi].color[1] = (float)c[1] / 255.0f;
-		part_verts[vi].color[2] = (float)c[2] / 255.0f;
-		//alpha = CLAMP(0, p->die + 0.5 - cl.time, 1);
-		part_verts[vi].color[3] = 255.0f; //(int)(alpha * 255);
-		vi++;
-
-		// 2
-		VectorCopy (p_v2, part_verts[vi].pos);
-		part_verts[vi].u = 1;
-		part_verts[vi].v = 0;
-		part_verts[vi].color[0] = (float)c[0] / 255.0f;
-		part_verts[vi].color[1] = (float)c[1] / 255.0f;
-		part_verts[vi].color[2] = (float)c[2] / 255.0f;
-		//alpha = CLAMP(0, p->die + 0.5 - cl.time, 1);
-		part_verts[vi].color[3] = 255.0f; //(int)(alpha * 255);
-		vi++;
-
-		// 1
-		VectorCopy (p_v1, part_verts[vi].pos);
-		part_verts[vi].u = 0;
-		part_verts[vi].v = 1;
-		part_verts[vi].color[0] = (float)c[0] / 255.0f;
-		part_verts[vi].color[1] = (float)c[1] / 255.0f;
-		part_verts[vi].color[2] = (float)c[2] / 255.0f;
-		//alpha = CLAMP(0, p->die + 0.5 - cl.time, 1);
-		part_verts[vi].color[3] = 255.0f; //(int)(alpha * 255);
-		vi++;
-
-		// 3
-		VectorCopy (p_v3, part_verts[vi].pos);
-		part_verts[vi].u = 1;
-		part_verts[vi].v = 1;
-		part_verts[vi].color[0] = (float)c[0] / 255.0f;
-		part_verts[vi].color[1] = (float)c[1] / 255.0f;
-		part_verts[vi].color[2] = (float)c[2] / 255.0f;
-		//alpha = CLAMP(0, p->die + 0.5 - cl.time, 1);
-		part_verts[vi].color[3] = 255.0f; //(int)(alpha * 255);
-		vi++;
-
-		num_particles++;
-	}
-
 	GL_BindBufferFunc (GL_ARRAY_BUFFER, part_vbo);
-	GL_BufferSubDataFunc (GL_ARRAY_BUFFER, 0, num_particles * sizeof(r_part_vertex_t) * 6, part_verts);
+	GL_BufferSubDataFunc (GL_ARRAY_BUFFER, 0, frame_particles * sizeof(r_part_vertex_t) * 6, part_verts);
 
 	GL_EnableVertexAttribArrayFunc (0);
 	GL_EnableVertexAttribArrayFunc (1);
@@ -1068,9 +1065,30 @@ void R_DrawParticles (void)
 	GL_VertexAttribPointerFunc (1, 2, GL_FLOAT, false, sizeof(r_part_vertex_t), ((float*)NULL) + 3);
 	GL_VertexAttribPointerFunc (2, 4, GL_FLOAT, false, sizeof(r_part_vertex_t), ((float*)NULL) + 5);
 
-	glDrawArrays (GL_TRIANGLES, 0, num_particles * 6);
+	glDrawArrays (GL_TRIANGLES, 0, frame_particles * 6);
+	glDisable (GL_BLEND);
 
-#if 0
+	GL_BindBufferFunc (GL_ARRAY_BUFFER, 0);
+	GL_UseProgramFunc (0);
+#endif
+#else
+
+	VectorScale(vup, 1.25, up);
+	VectorScale(vright, 1.25, right);
+
+	VectorCopy(up, down);
+	VectorInverse(down);
+
+	VectorCopy(right, left);
+	VectorInverse(left);
+
+	VectorAdd(down, left, v0);
+	VectorAdd(up, left, v1);
+	VectorAdd(down, right, v2);
+	VectorAdd(up, right, v3);
+
+	vec3_t p_up, p_right, p_upright;
+
 	glEnable (GL_BLEND);
 	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 	glDepthMask (GL_FALSE); //johnfitz -- fix for particle z-buffer bug
