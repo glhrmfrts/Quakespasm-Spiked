@@ -743,12 +743,12 @@ static void GLWater_CreateShaders (void)
 
 		"\n"
 
-		FOG_CALC_GLSL
-
 		"	lighting = clamp(lighting, 0.0, 1.0);\n"
 
 		"	result.a *= Alpha;\n"
 		"	result = clamp(result*lighting, 0.0, 1.0);\n"
+
+		FOG_CALC_GLSL
 
 		"	outColor = result;\n"
 		"}\n";
@@ -1255,7 +1255,7 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 	{
 		t = model->textures[i];
 
-		if (!t || !t->texturechains[chain] || t->texturechains[chain]->flags & (SURF_DRAWTILED | SURF_NOTEXTURE))
+		if (!t || !t->texturechains[chain] || t->texturechains[chain]->flags & (SURF_DRAWTILED | SURF_NOTEXTURE | SURF_DRAWTURB))
 			continue;
 
 	// Enable/disable TMU 2 (fullbrights)

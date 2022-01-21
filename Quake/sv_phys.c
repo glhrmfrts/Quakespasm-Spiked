@@ -1319,6 +1319,7 @@ SV_CheckWaterTransition
 */
 void SV_CheckWaterTransition (edict_t *ent)
 {
+	static float last_splash_sound_time;
 	int		cont;
 
 	cont = SV_PointContents (ent->v.origin);
@@ -1331,16 +1332,26 @@ void SV_CheckWaterTransition (edict_t *ent)
 	}
 
 	vec3_t partdir;
-	partdir[0] = ent->v.velocity[0]*0.75f;
-	partdir[1] = ent->v.velocity[1]*0.75f;
-	partdir[2] = -ent->v.velocity[2]*0.75f;
+	partdir[0] = ent->v.velocity[0] * 0.01f;
+	partdir[1] = ent->v.velocity[1] * 0.01f;
+	partdir[2] = -ent->v.velocity[2] * 0.1f;
+
+	vec3_t partorg;
+	partorg[0] = ent->v.origin[0];
+	partorg[1] = ent->v.origin[1];
+	partorg[2] = ent->v.origin[2];// -ent->v.velocity[2] * 1.5f;
 
 	if (cont <= CONTENTS_WATER)
 	{
 		if (ent->v.watertype == CONTENTS_EMPTY && *sv_sound_watersplash.string)
 		{	// just crossed into water
-			World_StartSound (ent, NULL, 0, sv_sound_watersplash.string, 255, 1);
-			SV_StartParticle (ent->v.origin, partdir, 2, 64);
+			if (sv.qcvm.time - last_splash_sound_time > 0.75f) {
+				World_StartSound(ent, NULL, 0, sv_sound_watersplash.string, 255, 1);
+				SV_StartParticle(partorg, partdir, 2 * 16, 232);
+				SV_StartParticle(partorg, (const vec3_t) { partdir[0] + 20.5f, partdir[1] - 20.5f, partdir[2] * 0.5f }, 2 * 16, 232);
+				SV_StartParticle(partorg, (const vec3_t) { partdir[0] - 20.5f, partdir[1] + 20.5f, partdir[2] * 0.4f }, 2 * 16, 232);
+				last_splash_sound_time = sv.qcvm.time;
+			}
 		}
 		ent->v.watertype = cont;
 		ent->v.waterlevel = 1;
@@ -1349,8 +1360,8 @@ void SV_CheckWaterTransition (edict_t *ent)
 	{
 		if (ent->v.watertype != CONTENTS_EMPTY && *sv_sound_watersplash.string)
 		{	// just crossed into water
-			World_StartSound (ent, NULL, 0, sv_sound_watersplash.string, 255, 1);
-			SV_StartParticle (ent->v.origin, partdir, 2, 64);
+			// World_StartSound (ent, NULL, 0, sv_sound_watersplash.string, 255, 1);
+			// SV_StartParticle (partorg, partdir, 2*16, 232);
 		}
 		ent->v.watertype = CONTENTS_EMPTY;
 		ent->v.waterlevel = cont;
@@ -1393,8 +1404,10 @@ void SV_Physics_Toss (edict_t *ent)
 // move origin
 	VectorScale (ent->v.velocity, host_frametime, move);
 	trace = SV_PushEntity (ent, move);
-	if (trace.fraction == 1)
+	if (trace.fraction == 1) {
+		SV_CheckWaterTransition (ent);
 		return;
+	}
 	if (ent->free)
 		return;
 
@@ -1420,7 +1433,6 @@ void SV_Physics_Toss (edict_t *ent)
 		}
 	}
 
-// check for in water
 	SV_CheckWaterTransition (ent);
 }
 

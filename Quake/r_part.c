@@ -248,7 +248,7 @@ static void R_InitParticleVBO ()
 {
 	GL_GenBuffersFunc (1, &part_vbo);
 	GL_BindBufferFunc (GL_ARRAY_BUFFER, part_vbo);
-	GL_BufferDataFunc (GL_ARRAY_BUFFER, sizeof(part_verts), &part_verts, GL_DYNAMIC_DRAW);
+	GL_BufferDataFunc (GL_ARRAY_BUFFER, sizeof(part_verts), part_verts, GL_DYNAMIC_DRAW);
 	GL_BindBufferFunc (GL_ARRAY_BUFFER, 0);
 }
 
@@ -997,7 +997,7 @@ void CL_RunParticles (void)
 		num_particles++;
 	}
 
-	Con_Printf("num_particles: %d\n", (int)num_particles);
+	//Con_Printf("num_particles: %d\n", (int)num_particles);
 
 	frame_particles = num_particles;
 }
@@ -1051,11 +1051,15 @@ void R_DrawParticles (void)
 	GL_VertexAttribPointerFunc (1, 4, GL_FLOAT, false, sizeof(r_part_vertex_t), ((float*)NULL) + 4);
 
 	glDrawArrays (GL_POINTS, 0, frame_particles);
-	glDisable (GL_BLEND);
-	glDepthMask (GL_TRUE);
+
+	GL_DisableVertexAttribArrayFunc (0);
+	GL_DisableVertexAttribArrayFunc (1);
 
 	GL_BindBufferFunc (GL_ARRAY_BUFFER, 0);
 	GL_UseProgramFunc (0);
+
+	glDisable (GL_BLEND);
+	glDepthMask (GL_TRUE);
 }
 
 

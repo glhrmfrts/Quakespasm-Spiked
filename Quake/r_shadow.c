@@ -1140,7 +1140,7 @@ static void R_Shadow_AddLightToUniformBuffer (r_shadow_light_t* light)
 // For now, just check if the light is inside a certain radius of the player.
 // FIXME: Implement better/proper culling.
 //
-static qboolean R_Shadow_CullLight(const r_shadow_light_t* light)
+static qboolean R_Shadow_CullLight (const r_shadow_light_t* light)
 {
 	const float CULL_RADIUS = 1024.0f;
 	vec3_t dist;

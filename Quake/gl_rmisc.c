@@ -236,6 +236,8 @@ void R_Init (void)
 	Cvar_SetCallback (&r_slimealpha, R_SetSlimealpha_f);
 
 	R_InitParticles ();
+	R_InitSprites ();
+
 #ifdef PSET_SCRIPT
 	PScript_InitParticles();
 #endif
@@ -616,29 +618,8 @@ glBindBuffer wrapper
 */
 void GL_BindBuffer (GLenum target, GLuint buffer)
 {
-	GLuint *cache;
-
-	if (!gl_vbo_able)
-		return;
-
-	switch (target)
-	{
-		case GL_ARRAY_BUFFER:
-			cache = &current_array_buffer;
-			break;
-		case GL_ELEMENT_ARRAY_BUFFER:
-			cache = &current_element_array_buffer;
-			break;
-		default:
-			Host_Error("GL_BindBuffer: unsupported target %d", (int)target);
-			return;
-	}
-
-	if (*cache != buffer)
-	{
-		*cache = buffer;
-		GL_BindBufferFunc (target, *cache);
-	}
+	// gnemeth -- removed the cache
+	GL_BindBufferFunc (target, buffer);
 }
 
 /*

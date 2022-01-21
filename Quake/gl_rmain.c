@@ -994,10 +994,14 @@ void R_RenderScene (void)
 		R_DrawShadows (); //johnfitz -- render entity shadows
 
 	R_DrawEntitiesOnList (false); //johnfitz -- false means this is the pass for nonalpha entities
+	R_FlushSprites ();
 
 	R_DrawWorld_Water (); //johnfitz -- drawn here since they might have transparency
 
 	R_DrawEntitiesOnList (true); //johnfitz -- true means this is the pass for alpha entities
+	R_FlushSprites ();
+
+	R_PrintSpriteInfo ();
 
 	R_RenderDlights (); //triangle fan dlights -- johnfitz -- moved after water
 

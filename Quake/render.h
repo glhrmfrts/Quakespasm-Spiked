@@ -228,6 +228,15 @@ void R_BatchSurface (struct msurface_s *s);
 
 
 //
+// sprite batching
+//
+
+void R_InitSprites ();
+
+void R_FlushSprites ();
+
+
+//
 // shadow mapping
 //
 
