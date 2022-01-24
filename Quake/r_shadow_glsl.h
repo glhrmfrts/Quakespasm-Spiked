@@ -66,16 +66,21 @@ SHADOW_POISSON_DISK_GLSL \
 "float CalcSpotShadow(int idx, vec3 world_coord, vec3 world_normal) {\n" \
 "	vec4 shadow_coord_v4 = (shadows[idx].shadow_matrix * vec4(world_coord, 1.0));\n" \
 "	vec3 shadow_coord = 0.5*(shadow_coord_v4.xyz/shadow_coord_v4.w)+0.5;\n" \
+"  float dist_factor = length(world_coord - shadows[idx].light_position.xyz) / shadows[idx].radius;\n " \
+"  float radinfluence = 1.0 - clamp(dist_factor*dist_factor, 0.0, 1.0);\n" \
 "	float light_factor = dot(normalize(world_coord - shadows[idx].light_position.xyz), shadows[idx].light_normal.xyz);\n" \
 "	if (light_factor <= shadows[idx].spot_cutoff) { return 0.0f; }\n" \
+"  float norm_factor = dot(-world_normal, shadows[idx].light_normal.xyz);\n" \
+"  if (norm_factor < 0) { return 0.0f; }\n" \
 "	float bias = shadows[idx].bias*(light_factor);\n" \
 "	float darken = shadows[idx].darken/6.0;\n" \
+"	float brighten = shadows[idx].brighten/6.0;\n" \
 "	float result = 0.0f;\n" \
 "	for (int j=0;j<6;j++) {\n" \
 "		int index = j;     //int(floor(16.0*texture2D(random_tex, (WorldCoord.xy+WorldCoord.z)*j).r));\n" \
 "       if (texture(shadow_map_samplers[idx], vec3(shadow_coord.xy+poissonDisk[index]/800.0,shadow_coord.z-bias)) < 1.0) {\n" \
-"           result += darken*(light_factor);\n" \
-"       }\n" \
+"           result += darken*light_factor*radinfluence;\n" \
+"       } else { result -= brighten*light_factor*radinfluence; }\n" \
 "   }\n" \
 "	return result;\n" \
 "}\n"

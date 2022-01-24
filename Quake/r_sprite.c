@@ -417,7 +417,7 @@ void R_DrawSpriteModel (entity_t *e)
 
 void R_PrintSpriteInfo ()
 {
-	Con_Printf ("batches: %d, sprites: %d\n", frame_batches, frame_sprites);
+	//Con_Printf ("batches: %d, sprites: %d\n", frame_batches, frame_sprites);
 	frame_batches = 0;
 	frame_sprites = 0;
 }

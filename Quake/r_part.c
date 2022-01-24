@@ -503,7 +503,7 @@ void R_ParticleExplosion (vec3_t org)
 	int			i, j;
 	particle_t	*p;
 
-	for (i=0 ; i<2048 ; i++)
+	for (i=0 ; i<1024 ; i++)
 	{
 		if (!free_particles)
 			return;
