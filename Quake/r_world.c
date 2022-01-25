@@ -110,6 +110,7 @@ void R_MarkSurfacesForLightShadowMap (r_shadow_light_t* light)
 		vis = Mod_NoVisPVS (cl.worldmodel);
 		break;
 	case r_shadow_light_type_spot:
+	case r_shadow_light_type_point:
 		viewleaf = Mod_PointInLeaf (light->light_position, cl.worldmodel);
 		vis = Mod_LeafPVS (viewleaf, cl.worldmodel);
 		break;
@@ -611,6 +612,7 @@ static struct
 	GLuint fog_data_block_index;
 	GLuint shadow_data_block_index;
 	GLuint shadow_map_samplers_loc[MAX_FRAME_SHADOWS];
+	GLuint shadow_map_cube_samplers_loc[MAX_FRAME_SHADOWS];
 } r_water[2];
 
 #define vertAttrIndex 0
@@ -781,8 +783,11 @@ static void GLWater_CreateShaders (void)
 
 			for (int si = 0; si < MAX_FRAME_SHADOWS; si++) {
 				static char uniform_name[] = "shadow_map_samplers[#]";
+				static char cube_uniform_name[] = "shadow_map_cube_samplers[#]";
 				uniform_name[strlen(uniform_name) - 2] = '0' + si;
+				cube_uniform_name[strlen(cube_uniform_name) - 2] = '0' + si;
 				r_water[i].shadow_map_samplers_loc[si] = GL_GetUniformLocation (&r_water[i].program, uniform_name);
+				r_water[i].shadow_map_cube_samplers_loc[si] = GL_GetUniformLocation (&r_water[i].program, cube_uniform_name);
 			}
 
 			r_water[i].dlight_data_block_index = GL_GetUniformBlockIndexFunc (r_water[i].program, "dlight_data");
@@ -887,7 +892,7 @@ void R_DrawTextureChains_Water (qmodel_t *model, entity_t *ent, texchain_t chain
 						1, false, (const GLfloat*)r_projection_view_matrix);
 
 					if (r_shadow_sun.value) {
-						R_Shadow_BindTextures (r_water[mode].shadow_map_samplers_loc);
+						R_Shadow_BindTextures (r_water[mode].shadow_map_samplers_loc, r_water[mode].shadow_map_cube_samplers_loc);
 					}
 
 					lastlightmap = s->lightmaptexturenum;
@@ -1021,6 +1026,7 @@ static GLuint fog_data_block_index;
 
 static GLuint shadow_data_block_index;
 static GLuint shadow_map_samplers_loc[MAX_FRAME_SHADOWS];
+static GLuint shadow_map_cube_samplers_loc[MAX_FRAME_SHADOWS];
 
 #define vertAttrIndex 0
 #define texCoordsAttrIndex 1
@@ -1164,8 +1170,11 @@ void GLWorld_CreateShaders (void)
 
 		for (int si = 0; si < MAX_FRAME_SHADOWS; si++) {
 			static char uniform_name[] = "shadow_map_samplers[#]";
+			static char cube_uniform_name[] = "shadow_map_cube_samplers[#]";
 			uniform_name[strlen(uniform_name) - 2] = '0' + si;
+			cube_uniform_name[strlen(cube_uniform_name) - 2] = '0' + si;
 			shadow_map_samplers_loc[si] = GL_GetUniformLocation (&r_world_program, uniform_name);
+			shadow_map_cube_samplers_loc[si] = GL_GetUniformLocation (&r_world_program, cube_uniform_name);
 		}
 
 		dlight_data_block_index = GL_GetUniformBlockIndexFunc (r_world_program, "dlight_data");
@@ -1248,7 +1257,7 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 		// GL_SelectTexture (RANDOM_TEXTURE_UNIT);
 		// glBindTexture (GL_TEXTURE_2D, GL_GetRandomTexture());
 
-		R_Shadow_BindTextures (shadow_map_samplers_loc);
+		R_Shadow_BindTextures (shadow_map_samplers_loc, shadow_map_cube_samplers_loc);
 	}
 	
 	for (i=0 ; i<model->numtextures ; i++)

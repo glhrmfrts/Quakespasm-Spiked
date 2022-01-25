@@ -299,6 +299,9 @@ extern STQ_PFNGLCHECKFRAMEBUFFERSTATUSPROC GL_CheckFramebufferStatusFunc;
 typedef void (APIENTRYP STQ_PFNGLFRAMEBUFFERTEXTUREPROC) (GLenum target, GLenum attachment, GLuint tex_id, GLint level);
 extern STQ_PFNGLFRAMEBUFFERTEXTUREPROC GL_FramebufferTextureFunc;
 
+typedef void (APIENTRYP STQ_PFNGLFRAMEBUFFERTEXTURE2DPROC) (GLenum target, GLenum attachment, GLenum tex_target, GLuint tex_id, GLint level);
+extern STQ_PFNGLFRAMEBUFFERTEXTURE2DPROC GL_FramebufferTexture2DFunc;
+
 typedef void (APIENTRYP STQ_PFNGLUNIFORMMATRIX4FVPROC) (GLuint loc, GLuint count, GLboolean row_major, const GLfloat* data);
 extern STQ_PFNGLUNIFORMMATRIX4FVPROC GL_UniformMatrix4fvFunc;
 

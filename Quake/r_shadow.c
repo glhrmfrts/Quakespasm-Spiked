@@ -55,11 +55,16 @@ enum {
 
 	SPOT_SHADOW_WIDTH = 1024,
 	SPOT_SHADOW_HEIGHT = 1024,
+
+	POINT_SHADOW_WIDTH = 1024,
+	POINT_SHADOW_HEIGHT = 1024,
 };
 
 #define SUN_SHADOW_BIAS (0.01f)
 
 #define SPOT_SHADOW_BIAS (0.000001f)
+
+#define POINT_SHADOW_BIAS SPOT_SHADOW_BIAS
 
 cvar_t r_shadow_sun = {"r_shadow_sun", "1", CVAR_ARCHIVE, 1.0f};
 cvar_t r_shadow_sundebug = {"r_shadow_sundebug", "0", CVAR_NONE, 0.0f};
@@ -70,12 +75,13 @@ cvar_t r_shadow_sunworldcast = {"r_shadow_sunworldcast", "1", CVAR_ARCHIVE, 1.0f
 static struct {
 	gl_shader_t shader;
 	int u_Tex;
+	int u_LightPos;
 	int u_UseAlphaTest;
 	int u_Alpha;
 	int u_Debug;
 	int u_ShadowMatrix;
 	int u_ModelMatrix;
-} shadow_brush_glsl;
+} shadow_brush_glsl[2];
 
 typedef struct {
 	int maxbones;
@@ -90,11 +96,27 @@ typedef struct {
 	GLuint texLoc;
 	GLuint alphaLoc;
 	GLuint debugLoc;
+	GLuint lightPosLoc;
 
 	// shadow uniforms
 	GLuint shadowMatrixLoc;
 	GLuint modelMatrixLoc;
 } shadow_aliasglsl_t;
+
+typedef struct {
+	GLenum cubemap_face;
+	vec3_t fwd;
+	vec3_t up;
+} shadow_point_camera_direction_t;
+
+static shadow_point_camera_direction_t shadow_point_camera_directions[] = {
+    { GL_TEXTURE_CUBE_MAP_POSITIVE_X, {1.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f} },
+    { GL_TEXTURE_CUBE_MAP_NEGATIVE_X, {-1.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f} },
+    { GL_TEXTURE_CUBE_MAP_POSITIVE_Y, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, -1.0f} },
+    { GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f, 1.0f} },
+    { GL_TEXTURE_CUBE_MAP_POSITIVE_Z, {0.0f, 0.0f, 1.0f}, {0.0f, -1.0f, 0.0f} },
+    { GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, {0.0f, 0.0f, -1.0f}, {0.0f, -1.0f, 0.0f} }
+};
 
 typedef struct {
 	mat4_t shadow_matrix;
@@ -119,7 +141,7 @@ typedef struct {
 } shadow_ubo_data_t;
 
 static int num_shadow_alias_glsl;
-static shadow_aliasglsl_t shadow_alias_glsl[ALIAS_GLSL_MODES];
+static shadow_aliasglsl_t shadow_alias_glsl[ALIAS_GLSL_MODES+2];
 
 static GLuint shadow_ubo;
 static shadow_ubo_data_t shadow_ubo_data;
@@ -163,17 +185,34 @@ static void R_Shadow_SetAngle_f ()
 
 static void R_Shadow_CreateBrushShaders ()
 {
-	if (!GL_CreateShaderFromVF (&shadow_brush_glsl.shader, shadow_brush_vertex_shader, shadow_brush_fragment_shader, 0, NULL)) {
-		Con_DWarning ("Failed to compile shadow shader\n");
-		return;
-	}
+	for (int i = 0; i < 2; i++) {
+		static char vert_source[8192];
+		static char frag_source[8192];
 
-	shadow_brush_glsl.u_Tex = GL_GetUniformLocationFunc (shadow_brush_glsl.shader.program_id, "Tex");
-	shadow_brush_glsl.u_UseAlphaTest = GL_GetUniformLocationFunc (shadow_brush_glsl.shader.program_id, "UseAlphaTest");
-	shadow_brush_glsl.u_Alpha = GL_GetUniformLocationFunc (shadow_brush_glsl.shader.program_id, "Alpha");
-	shadow_brush_glsl.u_ShadowMatrix = GL_GetUniformLocationFunc (shadow_brush_glsl.shader.program_id, "ShadowMatrix");
-	shadow_brush_glsl.u_ModelMatrix = GL_GetUniformLocationFunc (shadow_brush_glsl.shader.program_id, "ModelMatrix");
-	shadow_brush_glsl.u_Debug = GL_GetUniformLocationFunc (shadow_brush_glsl.shader.program_id, "Debug");
+		if (i == 0) {
+			q_snprintf(vert_source, sizeof(vert_source), shadow_brush_vertex_shader, "");
+			q_snprintf(frag_source, sizeof(frag_source), shadow_brush_fragment_shader, "");
+		}
+		else {
+			q_snprintf(vert_source, sizeof(vert_source), shadow_brush_vertex_shader, "#define POINT_LIGHT");
+			q_snprintf(frag_source, sizeof(frag_source), shadow_brush_fragment_shader, "#define POINT_LIGHT");
+		}
+
+		if (!GL_CreateShaderFromVF (&shadow_brush_glsl[i].shader, vert_source, frag_source, 0, NULL)) {
+			Con_DWarning ("Failed to compile shadow shader\n");
+			return;
+		}
+
+		shadow_brush_glsl[i].u_Tex = GL_GetUniformLocationFunc (shadow_brush_glsl[i].shader.program_id, "Tex");
+		shadow_brush_glsl[i].u_UseAlphaTest = GL_GetUniformLocationFunc (shadow_brush_glsl[i].shader.program_id, "UseAlphaTest");
+		shadow_brush_glsl[i].u_Alpha = GL_GetUniformLocationFunc (shadow_brush_glsl[i].shader.program_id, "Alpha");
+		shadow_brush_glsl[i].u_ShadowMatrix = GL_GetUniformLocationFunc (shadow_brush_glsl[i].shader.program_id, "ShadowMatrix");
+		shadow_brush_glsl[i].u_ModelMatrix = GL_GetUniformLocationFunc (shadow_brush_glsl[i].shader.program_id, "ModelMatrix");
+		shadow_brush_glsl[i].u_Debug = GL_GetUniformLocationFunc (shadow_brush_glsl[i].shader.program_id, "Debug");
+		if (i == 1) {
+			shadow_brush_glsl[i].u_LightPos = GL_GetUniformLocationFunc (shadow_brush_glsl[i].shader.program_id, "LightPos");	
+		}
+	}
 }
 
 #define pose1VertexAttrIndex 0
@@ -190,7 +229,7 @@ static void R_Shadow_CreateAliasShaders ()
 #if 1
 	int i;
 	shadow_aliasglsl_t *glsl;
-	char processedVertSource[8192], *defines;
+	char processedVertSource[8192], processedFragSource[8192], *defines, *lightdefines;
 	const glsl_attrib_binding_t bindings[] = {
 		{ "TexCoords", texCoordsAttrIndex },
 		{ "Pose1Vert", pose1VertexAttrIndex },
@@ -203,11 +242,11 @@ static void R_Shadow_CreateAliasShaders ()
 	if (!gl_glsl_alias_able)
 		return;
 
-	for (i = 0; i < ALIAS_GLSL_MODES; i++)
+	for (i = 0; i < ALIAS_GLSL_MODES+2; i++)
 	{
 		glsl = &shadow_alias_glsl[i];
 
-		if (i == ALIAS_GLSL_SKELETAL)
+		if (i%2 == ALIAS_GLSL_SKELETAL)
 		{
 			defines = "#define SKELETAL\n#define MAXBONES 64\n";
 			glsl->maxbones = 64;
@@ -217,7 +256,26 @@ static void R_Shadow_CreateAliasShaders ()
 			defines = "";
 			glsl->maxbones = 0;
 		}
-		q_snprintf(processedVertSource, sizeof(processedVertSource), shadow_alias_vertex_shader, defines);
+
+		if (i>=2)
+		{
+			lightdefines = "#define POINT_LIGHT\n";
+		}
+		else
+		{
+			lightdefines = "";
+		}
+
+		char alldefines[512];
+		memset(alldefines, 0, sizeof(alldefines));
+
+		Q_strcat(alldefines, defines);
+		Q_strcat(alldefines, lightdefines);
+
+		Con_Printf("%s\n", alldefines);
+
+		q_snprintf(processedVertSource, sizeof(processedVertSource), shadow_alias_vertex_shader, alldefines);
+		q_snprintf(processedFragSource, sizeof(processedFragSource), shadow_alias_fragment_shader, alldefines);
 
 #if 0
 		GL_CreateShaderFromVF (&glsl->shader, processedVertSource, shadow_alias_fragment_shader);
@@ -226,7 +284,7 @@ static void R_Shadow_CreateAliasShaders ()
 			GL_BindAttribLocationFunc(glsl->shader.program_id, bindings[i].attrib, bindings[i].name);
 		}
 #else
-		glsl->shader.program_id = GL_CreateProgram (processedVertSource, shadow_alias_fragment_shader, sizeof(bindings) / sizeof(bindings[0]), bindings);
+		glsl->shader.program_id = GL_CreateProgram (processedVertSource, processedFragSource, sizeof(bindings) / sizeof(bindings[0]), bindings);
 #endif 
 
 		if (glsl->shader.program_id != 0)
@@ -248,6 +306,9 @@ static void R_Shadow_CreateAliasShaders ()
 			glsl->debugLoc = GL_GetUniformLocation (&glsl->shader.program_id, "Debug");
 			glsl->shadowMatrixLoc = GL_GetUniformLocation (&glsl->shader.program_id, "ShadowMatrix");
 			glsl->modelMatrixLoc = GL_GetUniformLocation (&glsl->shader.program_id, "ModelMatrix");
+			if (i >= 2) {
+				glsl->lightPosLoc = GL_GetUniformLocation (&glsl->shader.program_id, "LightPos");
+			}
 			num_shadow_alias_glsl++;
 		}
 	}
@@ -275,6 +336,28 @@ static void R_Shadow_CreateFramebuffer (r_shadow_light_t* light)
 	glDrawBuffer (GL_NONE); // No color buffer is drawn to.
 	glReadBuffer (GL_NONE);
 
+	if (light->type == r_shadow_light_type_point) {
+		glGenTextures (1, &light->shadow_map_cubemap);
+		glBindTexture (GL_TEXTURE_CUBE_MAP, light->shadow_map_cubemap);
+		glTexParameteri (GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri (GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri (GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri (GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexParameteri (GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+		for (int i = 0; i < 6; i++) {
+			glTexImage2D(
+				shadow_point_camera_directions[i].cubemap_face,
+				0,
+				GL_R32F,
+				light->shadow_map_width,
+				light->shadow_map_height,
+				0,
+				GL_RED,
+				GL_FLOAT,
+				NULL);
+		}
+	}
+
 	if (GL_CheckFramebufferStatusFunc(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
 		Con_Warning ("Failed to create Sun Shadow Framebuffer\n");
 		return;
@@ -293,7 +376,7 @@ void R_Shadow_Init ()
 	Cvar_RegisterVariable(&r_shadow_sunworldcast);
 	Cmd_AddCommand("r_shadow_sunangle", R_Shadow_SetAngle_f);
 
-	if (!shadow_brush_glsl.shader.program_id) {
+	if (!shadow_brush_glsl[0].shader.program_id) {
 		R_Shadow_CreateBrushShaders();
 	}
 	if (num_shadow_alias_glsl < ALIAS_GLSL_MODES) {
@@ -451,7 +534,7 @@ void R_Shadow_SetupSun (vec3_t angle)
 	mat4_t render_view_matrix;
 	Matrix4_ViewMatrix (sun_light->light_angles, pos, render_view_matrix);
 
-	Matrix4_Multiply (proj_matrix, render_view_matrix, sun_light->shadow_map_projview);
+	Matrix4_Multiply (proj_matrix, render_view_matrix, sun_light->shadow_map_projview[0]);
 
 	mat4_t shadow_bias_matrix = {
 		0.5, 0.0, 0.0, 0.0,
@@ -459,7 +542,7 @@ void R_Shadow_SetupSun (vec3_t angle)
 		0.0, 0.0, 0.5, 0.0,
 		0.5, 0.5, 0.5, 1.0
 	};
-	Matrix4_Multiply (shadow_bias_matrix, sun_light->shadow_map_projview, sun_light->world_to_shadow_map);
+	Matrix4_Multiply (shadow_bias_matrix, sun_light->shadow_map_projview[0], sun_light->world_to_shadow_map);
 
 	// Ensure random texture is loaded cause we'll need it
 	GL_GetRandomTexture ();
@@ -477,7 +560,7 @@ void R_Shadow_AddSpotLight(const vec3_t pos, const vec3_t angles, float fov, flo
 	l->bias = SPOT_SHADOW_BIAS;
 	l->radius = zfar;
 	l->shadow_map_width = SPOT_SHADOW_WIDTH;
-	l->shadow_map_height = SPOT_SHADOW_HEIGHT;	
+	l->shadow_map_height = SPOT_SHADOW_HEIGHT;
 
 	VectorCopy(pos, l->light_position);
 
@@ -492,14 +575,43 @@ void R_Shadow_AddSpotLight(const vec3_t pos, const vec3_t angles, float fov, flo
 	mat4_t view_matrix, proj_matrix;
 	Matrix4_ViewMatrix(l->light_angles, l->light_position, view_matrix);
 	Matrix4_ProjectionMatrix(fov, fov, 1.0f, zfar, false, 0, 0, proj_matrix);
-	Matrix4_Multiply(proj_matrix, view_matrix, l->shadow_map_projview);
-	memcpy(l->world_to_shadow_map, l->shadow_map_projview, sizeof(l->shadow_map_projview));
+	Matrix4_Multiply(proj_matrix, view_matrix, l->shadow_map_projview[0]);
+	memcpy(l->world_to_shadow_map, l->shadow_map_projview[0], sizeof(l->shadow_map_projview[0]));
 
 	R_Shadow_CreateFramebuffer(l);
 
 	R_Shadow_LinkLight(l);
 
 	Con_Printf("Added shadow spotlight.\n");
+}
+
+void R_Shadow_AddPointLight (const vec3_t pos, float radius)
+{
+	r_shadow_light_t* l = calloc(1, sizeof(r_shadow_light_t));
+	l->enabled = true;
+	l->type = r_shadow_light_type_point;
+	l->bias = POINT_SHADOW_BIAS;
+	l->radius = radius;
+	l->shadow_map_width = POINT_SHADOW_WIDTH;
+	l->shadow_map_height = POINT_SHADOW_HEIGHT;
+
+	VectorCopy(pos, l->light_position);
+
+	const float fov = 90.0f;
+	mat4_t view_matrix, proj_matrix;
+	for (int i = 0; i < 6; i++) {
+		vec3_t angles;
+		VectorAngles(shadow_point_camera_directions[i].fwd, (const vec3_t){0.0f, 0.0f, 1.0f}, angles);
+		Matrix4_ViewMatrix(angles, l->light_position, view_matrix);
+		Matrix4_ProjectionMatrix(fov, fov, 1.0f, radius, false, 0, 0, proj_matrix);
+		Matrix4_Multiply(proj_matrix, view_matrix, l->shadow_map_projview[i]);
+	}
+
+	R_Shadow_CreateFramebuffer(l);
+
+	R_Shadow_LinkLight(l);
+
+	Con_Printf("Added shadow pointlight.\n");
 }
 
 enum shadow_entity { entity_invalid, entity_worldspawn, entity_light };
@@ -569,6 +681,9 @@ static void R_Shadow_EndEntity (enum shadow_entity t)
 	if (t == entity_light && shadowlight) {
 		if (shadowlightspot) {
 			R_Shadow_AddSpotLight (shadowlightorigin, shadowlightangle, shadowlightconeangle, shadowlightradius);
+		}
+		else {
+			R_Shadow_AddPointLight (shadowlightorigin, shadowlightradius);
 		}
 	}
 	else if (t == entity_worldspawn && worldsun) {
@@ -726,7 +841,8 @@ static void R_Shadow_DrawTextureChains (r_shadow_light_t* light, qmodel_t *model
 	glEnable (GL_BLEND);
 	glDisable (GL_CULL_FACE);
 
-	GL_UseProgramFunc (shadow_brush_glsl.shader.program_id);
+	int smode = light->type == r_shadow_light_type_point;
+	GL_UseProgramFunc (shadow_brush_glsl[smode].shader.program_id);
 	
 // Bind the buffers
 	GL_BindBuffer (GL_ARRAY_BUFFER, gl_bmodel_vbo);
@@ -737,13 +853,15 @@ static void R_Shadow_DrawTextureChains (r_shadow_light_t* light, qmodel_t *model
 
 	GL_EnableVertexAttribArrayFunc (1);
 	GL_VertexAttribPointerFunc (1, 2, GL_FLOAT, GL_FALSE, VBO_VERTEXSIZE * sizeof(float), ((float*)0) + 3);
-	
+
 // set uniforms
-	GL_Uniform1iFunc (shadow_brush_glsl.u_Tex, 0);
-	GL_Uniform1iFunc (shadow_brush_glsl.u_UseAlphaTest, 0);
-	GL_Uniform1fFunc (shadow_brush_glsl.u_Alpha, entalpha);
-	GL_UniformMatrix4fvFunc (shadow_brush_glsl.u_ShadowMatrix, 1, false, (const GLfloat*)light->shadow_map_projview);
-	GL_Uniform1iFunc (shadow_brush_glsl.u_Debug, r_shadow_sundebug.value);
+	GL_Uniform1iFunc (shadow_brush_glsl[smode].u_Tex, 0);
+	GL_Uniform1iFunc (shadow_brush_glsl[smode].u_UseAlphaTest, 0);
+	GL_Uniform1fFunc (shadow_brush_glsl[smode].u_Alpha, entalpha);
+	GL_UniformMatrix4fvFunc (shadow_brush_glsl[smode].u_ShadowMatrix, 1, false,
+		(const GLfloat*)light->shadow_map_projview[light->current_cube_face]);
+	GL_Uniform1iFunc (shadow_brush_glsl[smode].u_Debug, r_shadow_sundebug.value);
+	GL_Uniform3fFunc (shadow_brush_glsl[smode].u_LightPos, light->light_position[0], light->light_position[1], light->light_position[2]);
 
 	mat4_t model_matrix;
 	if (ent) {
@@ -752,7 +870,7 @@ static void R_Shadow_DrawTextureChains (r_shadow_light_t* light, qmodel_t *model
 	else {
 		Matrix4_InitIdentity (model_matrix);
 	}
-	GL_UniformMatrix4fvFunc (shadow_brush_glsl.u_ModelMatrix, 1, false, (const GLfloat*)model_matrix);
+	GL_UniformMatrix4fvFunc (shadow_brush_glsl[smode].u_ModelMatrix, 1, false, (const GLfloat*)model_matrix);
 
 	qboolean bound = false;
 	
@@ -774,7 +892,7 @@ static void R_Shadow_DrawTextureChains (r_shadow_light_t* light, qmodel_t *model
 				GL_Bind((R_TextureAnimation(t, ent != NULL ? ent->frame : 0))->gltexture);
 
 				if (t->texturechains[chain]->flags & SURF_DRAWFENCE)
-					GL_Uniform1iFunc(shadow_brush_glsl.u_UseAlphaTest, 1); // Flip alpha test back on
+					GL_Uniform1iFunc(shadow_brush_glsl[smode].u_UseAlphaTest, 1); // Flip alpha test back on
 
 				bound = true;
 			}
@@ -787,7 +905,7 @@ static void R_Shadow_DrawTextureChains (r_shadow_light_t* light, qmodel_t *model
 		R_FlushBatch ();
 
 		if (bound && t->texturechains[chain]->flags & SURF_DRAWFENCE)
-			GL_Uniform1iFunc (shadow_brush_glsl.u_UseAlphaTest, 0); // Flip alpha test back off
+			GL_Uniform1iFunc (shadow_brush_glsl[smode].u_UseAlphaTest, 0); // Flip alpha test back off
 	}
 	
 	// clean up
@@ -959,8 +1077,9 @@ void R_Shadow_DrawAliasFrame (r_shadow_light_t* light, shadow_aliasglsl_t* glsl,
 		GL_Uniform4fvFunc (glsl->bonesLoc, paliashdr->numbones*3, lerpdata->bonestate->mat);
 	GL_Uniform1iFunc (glsl->texLoc, 0);
 	GL_Uniform1fFunc (glsl->alphaLoc, entalpha);
-	GL_UniformMatrix4fvFunc (glsl->shadowMatrixLoc, 1, false, (const GLfloat*)light->shadow_map_projview);
+	GL_UniformMatrix4fvFunc (glsl->shadowMatrixLoc, 1, false, (const GLfloat*)light->shadow_map_projview[light->current_cube_face]);
 	GL_Uniform1iFunc (glsl->debugLoc, r_shadow_sundebug.value);
+	GL_Uniform3fFunc (glsl->lightPosLoc, light->light_position[0], light->light_position[1], light->light_position[2]);
 
 	mat4_t model_matrix;
 	if (ent) {
@@ -1008,7 +1127,11 @@ void R_Shadow_DrawAliasModel (r_shadow_light_t* light, entity_t *e)
 	R_SetupAliasFrame (paliashdr, e, &lerpdata);
 	R_SetupEntityTransform (e, &lerpdata);
 
-	glsl = &shadow_alias_glsl[(paliashdr->poseverttype==PV_IQM)?ALIAS_GLSL_SKELETAL:ALIAS_GLSL_BASIC];
+	int smode = (paliashdr->poseverttype==PV_IQM)?ALIAS_GLSL_SKELETAL:ALIAS_GLSL_BASIC;
+	if (light->type == r_shadow_light_type_point) {
+		smode += 2;	
+	}
+	glsl = &shadow_alias_glsl[smode];
 
 	//
 	// random stuff
@@ -1084,7 +1207,17 @@ static void R_Shadow_PrepareToRender (r_shadow_light_t* light)
 	else {
 		GL_BindFramebufferFunc (GL_FRAMEBUFFER, light->shadow_map_fbo);
 		glViewport (0, 0, light->shadow_map_width, light->shadow_map_height);
-		glClear (GL_DEPTH_BUFFER_BIT);
+		
+		if (light->type == r_shadow_light_type_point) {
+			GL_FramebufferTexture2DFunc (GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+				shadow_point_camera_directions[light->current_cube_face].cubemap_face,
+				light->shadow_map_cubemap, 0);
+			glDrawBuffer (GL_COLOR_ATTACHMENT0);
+			glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		}
+		else {
+			glClear (GL_DEPTH_BUFFER_BIT);
+		}
 	}
 }
 
@@ -1114,6 +1247,22 @@ static void R_Shadow_RenderSpotShadowMap (r_shadow_light_t* light)
 	light->rendered = true;
 }
 
+static void R_Shadow_RenderPointShadowMap (r_shadow_light_t* light)
+{
+	light->brighten = r_shadow_sunbrighten.value;
+	light->darken = r_shadow_sundarken.value;
+
+	for (int i = 0; i < 6; i++) {
+		light->current_cube_face = i;
+		R_Shadow_PrepareToRender (light);
+		R_Shadow_DrawTextureChains (light, cl.worldmodel, NULL, chain_world);
+		R_Shadow_DrawEntities (light);
+	}
+
+	last_light_rendered = light;
+	light->rendered = true;	
+}
+
 static void R_Shadow_AddLightToUniformBuffer (r_shadow_light_t* light)
 {
 	if (shadow_ubo_data.num_shadow_maps >= MAX_FRAME_SHADOWS) {
@@ -1132,8 +1281,14 @@ static void R_Shadow_AddLightToUniformBuffer (r_shadow_light_t* light)
 	VectorCopy (light->light_normal, ldata->light_normal);
 	memcpy (ldata->shadow_matrix, light->world_to_shadow_map, sizeof(mat4_t));
 
-	shadow_frame_textures[shadow_ubo_data.num_shadow_maps - 1].id = light->shadow_map_texture;
-	shadow_frame_textures[shadow_ubo_data.num_shadow_maps - 1].unit = SHADOW_MAP_TEXTURE_UNIT - GL_TEXTURE0 + light->id;
+	if (light->type == r_shadow_light_type_point) {
+		shadow_frame_textures[shadow_ubo_data.num_shadow_maps - 1].id = light->shadow_map_cubemap;
+		shadow_frame_textures[shadow_ubo_data.num_shadow_maps - 1].unit = SHADOW_MAP_TEXTURE_UNIT - GL_TEXTURE0 + light->id;
+	}
+	else {
+		shadow_frame_textures[shadow_ubo_data.num_shadow_maps - 1].id = light->shadow_map_texture;
+		shadow_frame_textures[shadow_ubo_data.num_shadow_maps - 1].unit = SHADOW_MAP_TEXTURE_UNIT - GL_TEXTURE0 + light->id;
+	}
 }
 
 //
@@ -1177,12 +1332,18 @@ GLuint R_Shadow_GetUniformBuffer ()
 	return shadow_ubo;
 }
 
-void R_Shadow_BindTextures (const GLuint* sampler_locations)
+void R_Shadow_BindTextures (const GLuint* sampler_locations, const GLuint* sampler_cube_locations)
 {
 	for (int i = 0; i < shadow_ubo_data.num_shadow_maps; i++) {
 		GL_SelectTexture (GL_TEXTURE0 + shadow_frame_textures[i].unit);
-		glBindTexture (GL_TEXTURE_2D, shadow_frame_textures[i].id);
-		GL_Uniform1iFunc (sampler_locations[i], shadow_frame_textures[i].unit);
+		if (shadow_ubo_data.shadows[i].light_type == (int)r_shadow_light_type_point) {
+			glBindTexture (GL_TEXTURE_CUBE_MAP, shadow_frame_textures[i].id);
+			GL_Uniform1iFunc (sampler_cube_locations[i], shadow_frame_textures[i].unit);
+		}
+		else {
+			glBindTexture (GL_TEXTURE_2D, shadow_frame_textures[i].id);
+			GL_Uniform1iFunc (sampler_locations[i], shadow_frame_textures[i].unit);
+		}
 	}
 }
 
@@ -1201,6 +1362,10 @@ void R_Shadow_RenderShadowMap ()
 				R_Shadow_RenderSpotShadowMap (light);
 			}
 			break;
+		case r_shadow_light_type_point:
+			if (R_Shadow_CullLight(light)) {
+				R_Shadow_RenderPointShadowMap (light);
+			}
 		}
 	}
 
@@ -1239,6 +1404,7 @@ static void R_Shadow_Cleanup ()
 
 static const GLchar *shadow_brush_vertex_shader = \
 	"#version 330 core\n"
+	"%s\n"
 	"\n"
 	"layout (location=0) in vec3 Vert;\n"
 	"layout (location=1) in vec2 aTexCoord;\n"
@@ -1246,30 +1412,39 @@ static const GLchar *shadow_brush_vertex_shader = \
 	"uniform mat4 ShadowMatrix;\n"
 	"uniform mat4 ModelMatrix;\n"
 	"\n"
+	"\nsmooth out vec4 worldCoord;\n"
 	"\nsmooth out vec2 texCoord;\n"
 	"\n"
 	"void main()\n"
 	"{\n"
-	"	gl_Position = ShadowMatrix * ModelMatrix * vec4(Vert, 1.0);\n"
+	"	worldCoord = ModelMatrix * vec4(Vert, 1.0);\n" \
+	"	gl_Position = ShadowMatrix * worldCoord;\n"
 	"   texCoord = aTexCoord;\n"
 	"}\n";
 
 static const GLchar *shadow_brush_fragment_shader = \
 	"#version 330 core\n"
+	"%s\n"
 	"\n"
 	"uniform sampler2D Tex;\n"
 	"uniform int Debug;\n"
+	"uniform vec3 LightPos;\n"
 	"\n"
+	"smooth in vec4 worldCoord;\n"
 	"smooth in vec2 texCoord;\n"
 	"\n"
-	"out vec4 ccolor;\n"
-	"//out float fragmentdepth;\n"
+	//"out vec4 ccolor;\n"
+	"out vec4 fcolor;\n"
 	"\n"
 	"void main()\n"
-	"{\n"
+	"{vec4 ccolor;\n"
 	"   if (Debug == 1) { ccolor = vec4(gl_FragCoord.z); }\n"
 	"   else if (Debug == 2) { ccolor = texture2D(Tex, texCoord); }\n"
+	"#ifdef POINT_LIGHT\n" \
+	"	else { vec4 texcol = texture2D(Tex, texCoord); if (texcol.a<0.1) { discard; } else { fcolor=vec4(length(LightPos-worldCoord.xyz)/500.0); } } \n" \
+	"#else\n" \
 	"   else { vec4 texcol = texture2D(Tex, texCoord); if (texcol.a<0.1) { discard; } else { gl_FragDepth = gl_FragCoord.z; } }\n"
+	"#endif\n" \
 	"}\n";
 
 
@@ -1300,6 +1475,8 @@ static const GLchar *shadow_alias_vertex_shader = \
 	"uniform mat4 ShadowMatrix;\n"
 	"uniform mat4 ModelMatrix;\n"
 
+	"varying vec4 worldCoord;\n"
+
 	"void main()\n"
 	"{\n"
 	"	gl_TexCoord[0] = vec4(TexCoords, 0.0, 1.0);\n"
@@ -1322,25 +1499,33 @@ static const GLchar *shadow_alias_vertex_shader = \
 	"#else\n"
 	"	vec4 lerpedVert = mix(vec4(Pose1Vert.xyz, 1.0), vec4(Pose2Vert.xyz, 1.0), Blend);\n"
 	"#endif\n"
-	"	gl_Position = ShadowMatrix * ModelMatrix * lerpedVert;\n"
+	"	worldCoord = ModelMatrix * lerpedVert;\n" \
+	"	gl_Position = ShadowMatrix * worldCoord;\n" \
 	"}\n";
 
 static const GLchar *shadow_alias_fragment_shader = \
 	"#version 330 core\n"
+	"%s\n"
 	"\n"
 	"uniform sampler2D Tex;\n"
 	"uniform int Debug;\n"
 	"uniform float Alpha;\n"
+	"uniform vec3 LightPos;\n"
 	"\n"
 	"smooth in vec2 texCoord;\n"
+	"smooth in vec4 worldCoord;\n"
 	"\n"
-	"out vec4 ccolor;\n"
-	"//out float fragmentdepth;\n"
+	//"out vec4 ccolor;\n"
+	"out vec4 fcolor;\n"
 	"\n"
 	"void main()\n"
-	"{\n"
+	"{vec4 ccolor;\n"
 	"   if (Alpha < 0.1) { discard; }\n"
 	"   if (Debug == 1) { ccolor = vec4(gl_FragCoord.z); }\n"
 	"   else if (Debug == 2) { ccolor = texture2D(Tex, texCoord); }\n"
+	"#ifdef POINT_LIGHT\n" \
+	"	else { vec4 texcol = texture2D(Tex, texCoord); if (texcol.a<0.1) { discard; } else { fcolor=vec4(length(LightPos-worldCoord.xyz)); } } \n" \
+	"#else\n" \
 	"   else { vec4 texcol = texture2D(Tex, texCoord); if (texcol.a<0.1) { discard; } else { gl_FragDepth = gl_FragCoord.z; } }\n"
+	"#endif\n" \
 	"}\n";

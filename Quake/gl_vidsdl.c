@@ -156,6 +156,7 @@ STQ_PFNGLBINDVERTEXARRAYPROC GL_BindVertexArrayFunc = NULL; // gnemeth
 STQ_PFNGLGENFRAMEBUFFERSPROC GL_GenFramebuffersFunc = NULL; // gnemeth
 STQ_PFNGLBINDFRAMEBUFFERPROC GL_BindFramebufferFunc = NULL; // gnemeth
 STQ_PFNGLFRAMEBUFFERTEXTUREPROC GL_FramebufferTextureFunc = NULL; // gnemeth
+STQ_PFNGLFRAMEBUFFERTEXTURE2DPROC GL_FramebufferTexture2DFunc = NULL; // gnemeth
 STQ_PFNGLCHECKFRAMEBUFFERSTATUSPROC GL_CheckFramebufferStatusFunc = NULL; // gnemeth
 
 STQ_PFNGLUNIFORMMATRIX4FVPROC GL_UniformMatrix4fvFunc = NULL; // gnemeth
@@ -1301,6 +1302,7 @@ static void GL_CheckExtensions (void)
 		GL_BindFramebufferFunc = (STQ_PFNGLBINDFRAMEBUFFERPROC) SDL_GL_GetProcAddress("glBindFramebuffer");
 		GL_CheckFramebufferStatusFunc = (STQ_PFNGLCHECKFRAMEBUFFERSTATUSPROC) SDL_GL_GetProcAddress("glCheckFramebufferStatus");
 		GL_FramebufferTextureFunc = (STQ_PFNGLFRAMEBUFFERTEXTUREPROC) SDL_GL_GetProcAddress("glFramebufferTexture");
+		GL_FramebufferTexture2DFunc = (STQ_PFNGLFRAMEBUFFERTEXTURE2DPROC) SDL_GL_GetProcAddress("glFramebufferTexture2D");
 		if (GL_GenFramebuffersFunc && GL_BindFramebufferFunc && GL_CheckFramebufferStatusFunc && GL_FramebufferTextureFunc)
 		{
 			Con_Printf ("FOUND: ARB_framebuffer_object\n");

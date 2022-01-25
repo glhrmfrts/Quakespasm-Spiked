@@ -90,6 +90,7 @@ typedef struct
 	GLuint fog_data_block_index;
 	GLuint shadow_data_block_index;
 	GLuint shadow_map_samplers_loc[MAX_FRAME_SHADOWS];
+	GLuint shadow_map_cube_samplers_loc[MAX_FRAME_SHADOWS];
 
 } aliasglsl_t;
 static aliasglsl_t r_alias_glsl[ALIAS_GLSL_MODES];
@@ -357,8 +358,11 @@ void GLAlias_CreateShaders (void)
 
 			for (int si = 0; si < MAX_FRAME_SHADOWS; si++) {
 				static char uniform_name[] = "shadow_map_samplers[#]";
+				static char cube_uniform_name[] = "shadow_map_cube_samplers[#]";
 				uniform_name[strlen(uniform_name) - 2] = '0' + si;
+				cube_uniform_name[strlen(cube_uniform_name) - 2] = '0' + si;
 				glsl->shadow_map_samplers_loc[si] = GL_GetUniformLocation (&glsl->program, uniform_name);
+				glsl->shadow_map_cube_samplers_loc[si] = GL_GetUniformLocation (&glsl->program, cube_uniform_name);
 			}
 
 			glsl->dlight_data_block_index = GL_GetUniformBlockIndexFunc (glsl->program, "dlight_data");
@@ -484,7 +488,7 @@ void GL_DrawAliasFrame_GLSL (aliasglsl_t *glsl, aliashdr_t *paliashdr, lerpdata_
 
 // gnemeth - get the shadow data
 	if (r_shadow_sun.value) {
-		R_Shadow_BindTextures (glsl->shadow_map_samplers_loc);
+		R_Shadow_BindTextures (glsl->shadow_map_samplers_loc, glsl->shadow_map_cube_samplers_loc);
 	}
 	
 // set textures

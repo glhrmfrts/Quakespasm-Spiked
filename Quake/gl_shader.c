@@ -17,6 +17,8 @@ static qboolean compile_shader_stage(GLuint Shader, const char *Source)
 		GL_GetShaderInfoLogFunc(Shader, logLength, NULL, infoLog);
 		infoLog[logLength] = '\0';
 
+		COM_WriteFile ("failedshader.glsl", Source, strlen(Source));
+
 		Con_SafePrintf("failed to compile:\n%s\n", Source);
 		//exit(EXIT_FAILURE);
 		Con_SafePrintf("Shader error: %s", infoLog);

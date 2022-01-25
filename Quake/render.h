@@ -271,8 +271,10 @@ typedef struct r_shadow_light_s {
 	int shadow_map_height;
 	GLuint shadow_map_fbo;
 	GLuint shadow_map_texture;
-	mat4_t shadow_map_projview;
+	GLuint shadow_map_cubemap;
+	GLenum current_cube_face;
 	mat4_t world_to_shadow_map;
+	mat4_t shadow_map_projview[6];
 
 	// next in the global list of lights
 	struct r_shadow_light_s* next;

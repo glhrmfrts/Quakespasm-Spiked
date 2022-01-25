@@ -46,6 +46,7 @@
 "	shadow_single_t shadows[10];\n" \
 "};\n" \
 "uniform sampler2DShadow shadow_map_samplers[10];\n" \
+"uniform samplerCube shadow_map_cube_samplers[10];\n" \
 "\n" \
 SHADOW_POISSON_DISK_GLSL \
 "float CalcSunShadow(int idx, vec3 world_coord, vec3 world_normal) {\n" \
@@ -83,6 +84,26 @@ SHADOW_POISSON_DISK_GLSL \
 "       } else { result -= brighten*light_factor*radinfluence; }\n" \
 "   }\n" \
 "	return result;\n" \
+"}\n" \
+"\n" \
+"float CalcPointShadow(int idx, vec3 world_coord, vec3 world_normal) {\n" \
+"  vec3 tolight = world_coord - shadows[idx].light_position.xyz;\n" \
+"  float lightdist = length(tolight);\n" \
+"  float dist_factor = lightdist / shadows[idx].radius;\n " \
+"  float radinfluence = 1.0 - clamp(dist_factor*dist_factor, 0.0, 1.0);\n" \
+"	float light_factor = dot(normalize(tolight), -world_normal);\n" \
+"	if (light_factor < 0) { return 0.0f; }\n" \
+"	float bias = shadows[idx].bias*(light_factor);\n" \
+"	float darken = shadows[idx].darken;\n" \
+"	float brighten = shadows[idx].brighten;\n" \
+"	float result = 0.0f;\n" \
+"  float sdist = texture(shadow_map_cube_samplers[idx], tolight).r * 500.0;\n" \
+"  if (lightdist < sdist+bias) {\n" \
+"     result -= brighten*light_factor*radinfluence;\n" \
+"  } else {\n" \
+"     result += darken*light_factor*radinfluence;\n" \
+"  }\n" \
+"	return clamp(result, 0.0, 1.0);\n" \
 "}\n"
 
 #define SHADOW_VERT_OUTPUT_GLSL \
@@ -99,5 +120,6 @@ SHADOW_POISSON_DISK_GLSL \
 "	float shadow_factor;" \
 "	if (shadows[i].light_type==0) { shadow_factor = CalcSunShadow(i, WorldCoord, " vertNormal "); }\n" \
 "	else if (shadows[i].light_type==1) { shadow_factor = CalcSpotShadow(i, WorldCoord, " vertNormal "); }\n" \
+"	else if (shadows[i].light_type==2) { shadow_factor = CalcPointShadow(i, WorldCoord, " vertNormal "); }\n" \
 "  lighting.xyz *= (1.0 - shadow_factor);\n" \
 "}\n"
